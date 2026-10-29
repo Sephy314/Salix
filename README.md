@@ -1,319 +1,417 @@
-# MBQ: Merge-Based and Majority-Quorum BFT Protocol
+# MBQ, Merge based and Majority Quorum BFT Protocol.
 
 ## Purpose
-
-- This protocol aims to achieve safety in a Byzantine environment using only a majority quorum in a consensus algorithm. It addresses Byzantine consensus through evidence exchange, unforgeable signatures, and the assumption of synchronous communication.
+- This protocol ensures safety in a Byzantine environment using only a majority quorum in a consensus algorithm, solving Byzantine consensus through the exchange of observations, unforgeable signatures, and a synchronous communication assumption.
 
 ## Assumptions
-
-- Byzantine nodes may exhibit crashes, network failures, timeouts, partial or complete silence, equivocation, false requests, collusion, and other Byzantine behaviours.
+- Byzantine nodes may exhibit behaviors such as crashes, network failures, timeouts, partial or total silence, equivocation, false requests, and collusion.
 - The communication environment is assumed to be synchronous.
-- This algorithm addresses only the consensus problem. Failure recovery is the responsibility of the implementation.
-- The system consists of \(2f+1\) nodes, of which at most \(f\) may be Byzantine, crash-faulty, or omission-faulty, while \(f+1\) nodes are honest.
-- Even a legitimate client request may fail to be delivered under certain circumstances, but it can succeed through retries.
+- This algorithm deals solely with the consensus problem. Fail recovery is the responsibility of the implementation layer.
+- The number of potentially Byzantine, crash, or omission-faulty nodes is $f$, and the number of honest nodes is $f+1$, consisting of a total of $2f+1$ nodes.
+- Normal requests from a client may fail depending on circumstances, but can succeed through retries.
 - The retry policy is the responsibility of the client.
-- Clients are always honest and are assumed never to become Byzantine.
-- All nodes and clients can generate unforgeable digital signatures.
-- Load-balancing policies that permanently associate a client with a single server, such as IP hashing, are unsuitable for this approach.
-- `Unknown` is independent of whether a node is Byzantine.
+- Clients are assumed to be always honest and never Byzantine.
+- All nodes and clients are capable of generating unforgeable signatures.
+- Load balancing rules such as IP Hashing, which always bind a client and a server 1:1, are inappropriate for this method.
+- `Unknown` is unrelated to whether a node is Byzantine or not.
 - Signatures are unforgeable.
-- The same client request is committed at most once.
-- Client retries are the responsibility of the implementation. Idempotency must be preserved, for example, by checking the log for an existing instance of the same request.
-- False failures may occur. The policy for handling them is the client's responsibility. A false failure initiates a new consensus instance that is not associated with any previous consensus instance.
-- Each signature covers all the contents of its corresponding message. A signature cannot be reused across different phases or requests.
-- A phase terminates when responses have been received from all nodes or a timeout occurs. Messages arriving after phase termination are not accepted.
-- Each consensus instance handles exactly one client request.
-- Commit-certificate signatures may be optimised using techniques such as threshold signatures, provided that safety is preserved, depending on the implementation.
-- A node signs at most one final claim for a given consensus instance.
+- The same client request is committed only once.
+- Retrying client requests is the responsibility of the implementation, which must preserve idempotency by checking whether the same request already exists in the log.
+- False failures may occur, and the policy for handling them is the client's responsibility. This initiates a new consensus instance unrelated to the previous consensus.
+- A signature signs all of one's own messages. This signature cannot be reused in other phases or requests.
+- The end of a phase is defined as when responses from all nodes have arrived or a timeout has occurred. Requests arriving after the end of a phase are not accepted.
+- A single consensus instance handles only one client request.
+- Commit certificate signatures at the Commit phase can be optimized using techniques such as Threshold signatures, depending on the implementation, as long as safety is preserved.
+- A single node signs only one final claim per consensus instance.
+- Each consensus instance is independent.
+- Messages between honest nodes arrive within a maximum delay of $\Delta$. An honest node that violates this assumption (a node that fails to respond within $s_k$) is classified as silent, treated as a faulty node, and consumes the fault budget $f$.
+- Neither absolute time nor clock synchronization across nodes is assumed. Phase transitions occur solely via each node's local events and local timers.
+- Nodes with extremely high ping or computation time are regarded as faulty nodes.
 
 ## Phases
-
 ### Propose
-
-```text
-Propose(clientId, request, requestSignature) -> (proposeId)
 ```
-
-- The node that initiates the proposal becomes the proposer for the current consensus instance.
-- This phase forwards the request received from the client to the other nodes.
-- The proposer advances to the next phase after receiving responses from all nodes, including timeout outcomes.
-- Since the proposer propagates the request to all nodes, the time complexity of this phase is \(O(n)\).
+    Propose(clientId, request, requestSignature) -> (proposeId)
+```
+- The node that initiates Propose becomes the proposer for this consensus instance.
+- In this phase, the request received from the client is forwarded to the other nodes.
+- Once the proposer receives responses from all nodes (including timeouts), it advances to the next phase.
+- Because a single node propagates to the other nodes, the time complexity is $O(n)$.
 
 ### Prepare
-
-```text
-Prepare(proposeId, sentRequest, isRequestSignatureValid, Signature)
-    -> (sentRequest, isRequestSignatureValid, Signature)
 ```
-
-- In this phase, each node exchanges the value it received from the proposer and whether the associated signature is valid.
-- After this phase, each node possesses its own observation and the observations reported by other nodes.
-- Each report includes a signature that serves as evidence that the corresponding node made the claim.
-- Every node must generate exactly one valid signature per consensus instance. Generating more than one valid signature for the same instance is considered equivocation.
-- Signatures are always verified upon receipt. If a node did not receive the `Propose` message but receives a `Prepare` message containing a valid client signature, it joins the consensus instance. Its own claim is `Unknown`.
-- Nodes that did not receive `Propose` participate in subsequent phases if they receive a `Prepare` message containing a valid client signature.
-- A response to a `Prepare` message concerning an unknown proposal is always `Unknown`.
-- The time complexity is \(O(n^2)\).
+    Prepare(proposeId, sentRequest, isRequestSignatureValid, Signature) -> (sentRequest, isRequestSignatureValid, Signature)
+```
+- In this phase, each node exchanges the value it received from the proposer along with whether its signature is valid.
+- After this phase, each node holds both the value it received and the values observed by other nodes.
+- It also provides a signature as evidence that the claim was generated by this node. This serves as proof that this node produced this value.
+- A single node must generate exactly one valid signature per consensus instance; generating two or more valid signatures is regarded as equivocation.
+- Signatures are always verified upon receipt. If a node did not receive the Propose message, it still participates in the consensus if it receives a Prepare message containing a valid client signature. Its own claim in this case is `Unknown`.
+- Nodes that did not receive Propose will participate in subsequent phases upon receiving a Prepare message with a valid client signature.
+- For a Prepare response regarding an unknown Propose, a node always returns `Unknown`.
+- The time complexity is $O(n^2)$.
 
 ### Merge
-
-```text
-Merge(proposeId, {clientId: [request, isRequestSignatureValid, prepareSignature]}, ...)
-    -> ({nodeId: {clientId: [request, isRequestSignatureValid, prepareSignature]}, ...})
 ```
-
-- This phase exchanges each node's observations with the other nodes.
-- Each node includes its own observations. The observations of all nodes and their corresponding signatures, which serve as evidence, are exchanged.
-- A single `Prepare` report does not guarantee safety because a Byzantine node may equivocate. This problem is addressed by comparing the observed values with one another.
-- This can be viewed as increasing the dimensionality of the information associated with each node's claims.
-- A Byzantine node may equivocate during this phase and send different information to different recipients. However, this does not affect the final safety guarantee.
-- If a Merge value cannot be received because of silence, a timeout, or a similar failure, it is treated as `Unknown`.
-- Claims made by honest nodes during `Prepare` are shared identically with all honest nodes through `Merge`. Equivocation during `Prepare` is addressed through equivocation detection in the `Merge` and `Conflict` phases.
-- Every honest node exchanges all of its observed `Prepare` evidence with every other honest node, without omitting any such evidence.
-- The time complexity is \(O(n^2)\). To reduce bit complexity, an implementation may introduce a hash-verification fast path. Since this does not change the logical protocol, it is left to the implementation.
+    Merge(proposeId, {clientId:[request, isRequestSignatureValid, prepareSignature]}, ...) -> ({nodeId: {clientId:[request, isRequestSignatureValid, prepareSignature]}, ...}})
+```
+- In this phase, nodes exchange the values they have observed with one another.
+- Each node includes its own observed value as well. Observations of all nodes and their corresponding signatures (as evidence) are exchanged.
+- Due to Byzantine equivocation, the Prepare phase alone does not guarantee safety, but comparing observed values with each other resolves this problem.
+- This phase is not for adding new information, but for detecting conflicting claims (equivocation).
+- This can be viewed as increasing the dimensionality of the node's values.
+- A Byzantine node may equivocate during this phase so that different nodes receive different information. However, this does not affect final safety.
+- If a Merge value is not received due to silence, timeout, etc., it is treated as an `Unknown` value.
+- A claim made by an honest node in Prepare is shared identically across all honest nodes through Merge. Equivocation in Prepare is prevented by equivocation detection across the Merge and Conflict phases.
+- Every honest node exchanges all Prepare evidence it observed with every other honest node without omission.
+- It has a time complexity of $O(n^2)$. To reduce bit complexity, a Fast-Path can be implemented using hash verification, but since this does not alter the logic, it is left as the responsibility of the implementation layer.
 
 ### Conflict
+- Broadly, this belongs as a sub-phase of Merge. However, for convenience, it is described separately.
+- This phase is executed locally once all value exchanges via Merge are complete.
+- Based on the results of Merge, each node examines whether any node equivocated and finalizes the claims.
+- Here, a specific node's claim may include a signature. If it is a malicious claim fabricated by a Byzantine node, that signature will fail verification (evaluate to false).
+- Through Merge, a node obtains a node-observation relation $R$. Let $O_i$ be the set of observed values for a target node $i$, and let $I_i$ be the set of distinct claim values within $O_i$ that are not `Unknown` and contain valid signatures (both a valid client signature and a valid Prepare signature from node $i$). Each node determines the final claim of target node $i$ according to the size of $|I_i|$ as follows:
+- **Judgment Rule 1 ($|I_i| = 0$, No Claim):** Since no claim with a valid signature exists, the final claim of node $i$ is treated as `Unknown`.
+- **Judgment Rule 2 ($|I_i| = 1$, Single Claim and Blocking Merge Participation After Prepare Silence):** Even if a single valid claim exists such that $I_i = \{v\}$, if $v$ does not match the observation of node $i$ directly obtained by this node during the Prepare phase (e.g., node $i$ was silent during Prepare and thus `Unknown`, but its signature was belatedly delivered during Merge by itself or another node), the final claim of node $i$ is invalidated as `Unknown`. That is, evidence received in Merge does not add new votes; $v$ is recognized as a final valid claim only if it was directly received in Prepare and matches.
+- **Judgment Rule 3 ($|I_i| \ge 2$, Conflicting Signature Detection / Equivocation):** If two or more valid signatures pointing to different values exist for the same node $i$ and all verify as true, this is clear equivocation; thus, the node is regarded as Byzantine and its final claim is treated as `Unknown`. (Because signature evidence observed by honest nodes is shared with one another during the Merge phase, if a Byzantine node signed and sent different values to honest nodes, all honest nodes can detect the equivocation via $|I_i| \ge 2$.)
+- **Proposer Verification:** An honest proposer must properly propagate a valid request and signature during the Propose phase. If the proposer omits its claim or commits equivocation, this is regarded as Byzantine behavior and the corresponding claim is treated as `Unknown`.
+- Therefore, a node's claim is recognized as a final valid claim only if it passes all of the judgment rules above ($|I_i| = 1$ and matching the directly received Prepare observation); otherwise, all are treated as `Unknown`.
+- Even if Byzantine nodes equivocate during the Merge phase, at most $f$ Byzantine nodes can interfere, so they cannot corrupt the agreed-upon claims of honest nodes or cause different honest nodes to adopt conflicting claims.
+- Once the final valid claims of all nodes are finalized, the candidate value that achieves at least a majority quorum ($f+1$) is determined as the final Conflict result ($C_i$). If no candidate value obtains at least a majority quorum ($f+1$), the result is determined as `Reject`, which is not necessarily the final committed outcome. The consensus outcome is finalized in the Commit phase.
 
-- This phase is conceptually a subphase of `Merge`, but is separated for clarity.
-- It begins once the exchange of values resulting from `Merge` has completed.
-- Each node locally consolidates the final claims of all nodes based on the Merge results.
-- A conflicting claim may carry a signature. If the claim is malicious and was generated by a Byzantine node, the signature may be invalid.
-- If two or more signatures associated with the same node support different values and all of those signatures are valid, the only remaining possibility is that the node equivocated. The node is therefore treated as Byzantine, and its final claim is set to `Unknown`.
-- Since honest nodes exchange observed signature evidence during `Merge`, all honest nodes can determine that a node equivocated if a Byzantine node sent different signed values to different honest nodes.
-- In addition, if a node's claim about itself in `Merge` differs from its own reported value in `Prepare`, the inconsistency can be identified as equivocation.
-- For each node that passes equivocation detection, a claim containing a valid signature is accepted as that node's final claim. If no valid signature exists, the node's final claim is assumed to be `Unknown`.
-- Even if Byzantine nodes equivocate during `Merge`, at most \(f\) Byzantine nodes can interfere with the process. They cannot corrupt honest nodes' claims or cause different honest nodes to adopt conflicting claims.
-- Once the final claims of all nodes have been consolidated, the candidate value supported by a majority quorum of \(f+1\) nodes is selected as the final `Conflict` result. If no candidate value exceeds the majority threshold, the result is `Reject`.
-
-### Commit
-
+### Commit (Incorporating Judgment Rule 1)
 ```text
-Commit(proposeId, clientRequest, clientSignature, nodeConsensusSignature)
-    -> (nodeConsensusSignature)
-
-commitCert = {
+  Collecting Signature: Commit(proposeId, clientRequest, clientSignature, nodeConsensusSignature) -> (nodeConsensusSignature)
+  Broadcast Commit Cert: Commit(proposeId, commitCert)
+  
+  commitCert = {
     proposeId,
     clientRequest,
     clientSignature,
     {
-        nodeId: nodeSignature,
-        ...
-    }
-}
+      nodeId: nodeSignature, 
+      ...
+    },
+  }
 ```
+- Final commitment is determined based on the result decided in the Conflict phase.
+- If a specific node's claim is treated as `Unknown` due to signature verification failure, timeout non-response, or equivocation, it is regarded as not having voted for any candidate value.
+- However, even when `Unknown` occurs, neither the overall quorum threshold ($Q=f+1$) nor the size of $f$ is reduced; they remain fixed.
+- If a valid candidate value (a value other than `Reject`) is determined as the Conflict result, an honest node signs that value and propagates it to the others. If the result is `Reject`, it does not sign.
+- Honest nodes derive only a valid candidate value or `Reject`, and since there are at most $f$ Byzantine nodes, they cannot exceed the majority quorum ($f+1$) and therefore cannot commit dual values.
+- Essential shared information for the client request—such as Propose Id, Client Request, and Client Signature—is signed with the node's own private key, and the signature is provided. A node receiving the signature verifies that it is valid.
+- When at least $f+1$ valid commit signatures from distinct nodes are collected for a specific value, this is recognized as a valid commit (Commit Certificate, `commitCert`).
+- Because there is only one candidate value within a consensus instance and $f$ Byzantine nodes alone cannot reach a quorum of $f+1$, safety is preserved.
+- Honest nodes never sign two different values, and Byzantine nodes alone cannot reach $f+1$ signatures; therefore, two conflicting commits cannot exist simultaneously.
+- Even if a node's own Conflict result was a valid value ($v$), it does not finalize the request as committed (applied to the log) until a valid `commitCert` ($f+1$ commit signatures) is collected.
+- Conversely, even if a node's own Conflict result was `Reject`, if it receives and verifies a valid `commitCert`, it recognizes this as a valid commit and applies it to its log (Follow-Up).
+- After exchanging commit signatures, to prevent Byzantine nodes from splitting the state by delivering signatures to only a subset of nodes, an honest node that completes or first receives a `commitCert` immediately broadcasts it to all nodes.
+- **Client Final Commit Confirmation Rule:** A node that obtains a valid `commitCert` and applies it to its log forwards it to the client (`Commit-Ack`). **The client confirms normal commitment of the value only when it has received `commitCert` application confirmations from at least $f+1$ distinct nodes.** (This fundamentally prevents Byzantine nodes from assembling a `commitCert`, hiding it from honest nodes, and delivering it only to the client to cause lost writes.)
+- If, due to selective propagation by Byzantine nodes, only some honest nodes obtain the `commitCert` or the client fails to receive $f+1$ confirmations and performs a retry, honest nodes that already hold the `commitCert` propagate that certificate so that other honest nodes and the client can immediately apply the commit.
+- Because all nodes send signature values to one another, the message complexity is $O(n^2)$.
 
-- The final commit decision is determined based on the result of the `Conflict` phase.
-- If a node's claim is treated as `Unknown` because of signature verification failure, a timeout, non-response, equivocation, or a similar condition, that node is considered not to have voted for any candidate value.
-- However, the occurrence of `Unknown` does not reduce the overall quorum threshold \(Q=f+1\) or the value of \(f\). Both remain fixed.
-- If the `Conflict` result is a valid candidate value other than `Reject`, honest nodes sign that value and propagate their signatures to one another. If the result is `Reject`, they do not sign it.
-- All honest nodes derive the same valid candidate value or derive `Reject`. Since there are at most \(f\) Byzantine nodes, they cannot exceed the majority threshold \(f+1\) on their own and therefore cannot commit conflicting values.
-- Each node signs the information required to identify the client request and shared across the consensus instance, including `proposeId`, `clientRequest`, and `clientSignature`, using its private key, and provides the resulting signature.
-- A receiving node verifies the validity of the signature.
-- If at least \(f+1\) valid commit signatures from distinct nodes are collected for a particular value, the result is recognised as a valid commit certificate.
-- There is only one candidate value per consensus instance. Since at most \(f\) nodes are Byzantine, they cannot independently reach the quorum of \(f+1\) signatures; therefore, safety is preserved.
-- Honest nodes do not sign different values, and Byzantine nodes alone cannot obtain \(f+1\) signatures. Consequently, two conflicting commit certificates cannot coexist.
-- The client determines whether the value has been successfully committed by obtaining \(f+1\) commit signatures forming a commit certificate.
-- Since nodes exchange their signatures with one another, the communication complexity is \(O(n^2)\).
+## Phase Stability
+- When a node receives valid responses from $f+1$ distinct nodes (including itself) in the current phase, it starts a wait timer $s_k$; when $s_k$ expires, it terminates that phase and advances to the next phase.
+- A node can also participate in voting, and once its own computation for that phase finishes, it casts a phase-transition vote for itself.
+- Only normal responses containing valid signatures are counted toward the vote tally.
+- $s_k$ must be greater than or equal to the sum of $\Delta$ and the upper bound on entry skew among honest nodes at the start of that phase. This condition guarantees that responses from honest nodes are not misclassified as silent, and the premise in Lemmas A and G that "evidence is exchanged via Merge" rests on this condition.
+- Requests belonging to a phase that arrive after that phase has terminated are rejected. This prevents post-termination insertion attacks.
+- For requests belonging to a future phase that has not yet started, the node returns `Try again`. This response makes no claim, and since an honest node will eventually reach that phase, the sender handles it via retries. Retries are configured with backoff and a maximum retry limit.
+- For cases where $f+1$ responses are never gathered, a hard timeout is placed on each phase. If the hard timeout expires, the consensus instance is aborted (`Reject`), and aborting does not affect safety. Retrying is the client's responsibility.
+- Receiving, relaying, and applying (Follow-Up) a `commitCert`, as well as forwarding it to the client, are not subject to these phase rules. A valid Cert is accepted at any time regardless of the current phase.
 
-# MBQ Lemmas
+---
+# MBQ — Lemmas and Proof Obligations
 
-## Lemma A — Detection of Conflicting Claims Through Evidence Exchange
+## Definitions and Notation
 
-**Statement.** If a Byzantine node generates valid signatures supporting different values for the same claim target within the same consensus instance, and those signatures are delivered to honest nodes through evidence exchange during the `Merge` phase, the honest nodes can detect the conflicting claims.
+Each consensus instance is identified by a unique consensus ID.
 
-**Proof.**
+- $N$: The set of all nodes, where $n=2f+1$.
+- $H$: The set of honest nodes, where $|H|\ge f+1$.
+- $B$: The set of Byzantine nodes, where $|B|\le f$.
+- $Q=f+1$: The fixed quorum threshold.
+- $v^*$: The request value signed by the honest client for the current consensus instance.
+- `Unknown`: Indicates that there is no accepted claim. It is not a vote, nor does it mean that the node is Byzantine.
+- `Reject`: The local Conflict result indicating that no candidate obtained the required number of claims from distinct nodes.
+- $O_i^{(j)}$: The set of claims observed by observer $i$ regarding target node $j$ after Merge.
+- $I_i^{(j)}$: The subset of claims in $O_i^{(j)}$ that are not `Unknown` and contain both a valid client request signature and a valid Prepare signature attributable to target node $j$.
+- $p_i^{(j)}$: The claim directly received by observer $i$ from target node $j$ during the Prepare phase. If no such claim was received, it is `Unknown`.
+- $C_i(v)$: The number of final claims from distinct node IDs recognized by node $i$ as supporting value $v$.
+- $C_i$: The final Conflict result of node $i$.
 
-Suppose that a Byzantine node \(b\) generates two valid signatures, \(\sigma_b(v_1)\) and \(\sigma_b(v_2)\), for two distinct values \(v_1 \ne v_2\). If both signatures belong to the same consensus instance and the same claim target, they represent mutually incompatible claims.
+All signatures must be directly verified by the receiving node. A boolean field indicating that a request signature is valid is not by itself evidence of validity.
 
-By the unforgeability of signatures, both signatures were genuinely generated by node \(b\). Therefore, if an honest node observes both signatures and verifies that they are mutually conflicting, it can detect the conflicting claims made by node \(b\).
+A node signature is bound to the corresponding consensus ID, phase, and claim. An honest node signs at most one claim in the same consensus instance. `Unknown` is not included in the quorum calculation for any candidate.
 
-Even if different honest nodes observe different signatures during `Prepare`, they can jointly identify the conflicting signatures by exchanging their observed evidence during `Merge`. Furthermore, if a node's own `Prepare` claim differs from the claim it reports for itself in `Merge`, the inconsistency is treated as a conflicting claim, and that node's claim is marked as `Unknown`.
+Conflict returns a candidate $v$ if and only if $C_i(v)\ge Q$. If no such candidate exists, it returns `Reject`. Aggregation is performed on the basis of distinct node IDs, not the number of observations or the number of target-node evaluations generated by a single observer.
 
-Therefore, whenever evidence of conflicting signatures is delivered to an honest node, the conflicting claims can be detected. \(\square\)
+---
 
-## Lemma B — Safety Against Silence and Selective Responses
+## Lemma A — Detection of Conflicting Signatures from a Target Node
 
-**Statement.** The silence or selective responses of Byzantine nodes may impede consensus progress or prevent the acquisition of sufficient evidence for commitment. However, silence itself cannot constitute valid evidence supporting a value, nor can it reduce the required quorum.
-
-**Proof.**
-
-We distinguish the following cases of Byzantine silence.
-
-**Case 1: Silence during `Propose`.**
-
-An honest node that receives a valid request and client signature forwards them during `Prepare`. A node that does not receive the `Propose` message may participate according to the protocol with its own claim set to `Unknown`. Therefore, selective delivery during `Propose` may cause nodes to observe different information, but it does not change the criteria for determining request validity.
-
-**Case 2: Complete silence during `Prepare`.**
-
-If a node's claim is not delivered to any honest node, the honest nodes possess no valid supporting evidence for that claim. The claim is treated as `Unknown` and is not counted as support for any valid candidate value.
-
-The number of Byzantine nodes is at most \(f\), and the required quorum is \(Q=f+1\). Therefore, Byzantine claims alone cannot satisfy the required quorum.
-
-**Case 3: Selective silence during `Prepare`.**
-
-If a Byzantine node's claim is delivered to at least one honest node, that honest node exchanges the observed evidence with the other honest nodes during `Merge`. Under the synchronous communication assumption and honest protocol compliance, the evidence is shared among the honest nodes.
-
-**Case 4: Silence during `Merge`.**
-
-Even if a Byzantine node sends no messages during `Merge`, if its claim was observed by at least one honest node during `Prepare`, that evidence is propagated to the other honest nodes through the corresponding honest node's `Merge` message. Therefore, silence during `Merge` alone cannot remove evidence that has already been observed from the exchange among honest nodes.
-
-Conversely, if the claim was not observed by any honest node, honest nodes treat it as `Unknown` and do not count it as valid support.
-
-In all of the above cases, silence may lead to `Reject` or prevent commitment. However, silence itself does not constitute valid supporting evidence and does not reduce the required quorum \(Q=f+1\). \(\square\)
-
-## Lemma C — Safety Against a Byzantine Proposer
-
-**Statement.** A Byzantine proposer can impede consensus progress through request omission, invalid client signatures, or selective request delivery. However, provided that honest nodes verify request validity and comply with the commit rules, the Byzantine proposer's actions alone cannot cause an invalid request to be committed.
+**Statement.** A claim of target node $j$ is accepted if and only if there exists exactly one valid signed claim and that claim matches the claim directly observed in Prepare.
 
 **Proof.**
 
-We consider the following cases of Byzantine proposer behaviour.
+We divide into cases according to the size of $I_i^{(j)}$.
 
-**Case 1: The request or client signature is missing or invalid.**
+1. If $|I_i^{(j)}|=0$, there is no valid signed claim attributable to target node $j$. Therefore, the final claim of that node is `Unknown`.
+2. If $|I_i^{(j)}|=1$ and the unique claim is $v$, that claim is accepted if and only if $p_i^{(j)}=v$. If there is no direct observation or it differs from $v$, the final claim is `Unknown`.
+3. If $|I_i^{(j)}|\ge2$, there exist at least two distinct valid signed claims attributable to the same target node. Since this is evidence of conflicting signatures, the final claim of that node is `Unknown`.
 
-Honest nodes do not recognise the request as a valid candidate. If valid request evidence and the required support cannot be obtained, the `Conflict` phase produces `Reject`, and honest nodes do not generate commit signatures for that request.
+Therefore, under the stated Conflict rules, if valid signature evidence is absent, mutually conflicting, or inconsistent with the direct Prepare observation, the target node's claim is not recognized as support for any specific value. $\square$
 
-**Case 2: The request is delivered to only some honest nodes.**
+**Scope.** This lemma describes the local classification rule. It does not by itself prove that all honest observers obtain the exact same evidence or the same Conflict result.
 
-Honest nodes that receive the request forward it together with the client signature during `Prepare`. Honest nodes that do not receive the request may participate with their claims set to `Unknown`. This may prevent sufficient support from being established, but it does not change the rules for determining request validity.
+---
 
-**Case 3: Byzantine nodes cooperate to obstruct request delivery.**
+## Lemma B — Silence Causes `Unknown` and Can Prevent Progress
 
-There are at most \(f\) Byzantine nodes. Their signatures alone cannot provide \(Q=f+1\) signatures from distinct nodes. If honest support does not reach the required quorum, the consensus instance may terminate with `Reject`.
-
-Conversely, even if a commit occurs, the commit certificate must satisfy the protocol's signature requirements and contain a valid request. Therefore, a Byzantine proposer may impede consensus progress, but it cannot bypass honest nodes' verification rules to commit an invalid request. \(\square\)
-
-## Lemma D — Probability of Electing an Honest Proposer Through Independent Retries
-
-**Statement.** If a proposer is selected independently and uniformly at random for each retry among \(n=2f+1\) nodes, the probability that at least one honest proposer is selected within \(k\) retries is given by
-
-\[
-\Pr[\text{honest proposer elected}]
-\geq
-1-\left(\frac{f}{2f+1}\right)^k.
-\]
-
-Consequently, as \(k\to\infty\), this probability converges to \(1\).
+**Statement.** A silent node may fail to provide an accepted claim in Conflict. Consequently, even if the request itself is valid, a consensus attempt may return `Reject`.
 
 **Proof.**
 
-There are at most \(f\) Byzantine nodes. Therefore, the probability of selecting a Byzantine proposer in a single independent draw is at most \(f/(2f+1)\).
+If a target node does not send a Prepare claim, an observer does not hold a directly signed Prepare claim from that node. Under the Conflict rules, the direct observation becomes `Unknown`. Even if a valid signed claim appears in later evidence, that claim cannot be accepted unless the direct Prepare observation matches it.
 
-Consequently, the probability that every proposer selected across \(k\) independent draws is Byzantine is at most
+Therefore, a silent node may fail to contribute to the count of valid claims for any candidate. If the number of accepted claims from distinct nodes is less than $Q=f+1$ for every candidate, Conflict returns `Reject`.
 
-\[
-\left(\frac{f}{2f+1}\right)^k.
-\]
+Hence, silence can prevent an attempt from making progress, though that fact alone does not prove that the request is invalid or that the node is Byzantine. $\square$
 
-The complementary event is that an honest proposer is selected at least once. Therefore,
+---
 
-\[
-\Pr[\text{honest proposer elected}]
-\geq
-1-\left(\frac{f}{2f+1}\right)^k.
-\]
+## Lemma C — A Byzantine Proposer Can Cause a Consensus Attempt to Fail
 
-Since \(f/(2f+1)<1\), the right-hand side converges to \(1\) as \(k\) increases. \(\square\)
-
-**Interpretation.** This lemma directly establishes the probability of electing an honest proposer. A separate liveness proof is required to establish that commitment is guaranteed after an honest proposer has been selected.
-
-
-## Lemma E — Consistent Final Interpretation of Honest-Node Claims
-
-**Statement.** If an honest node \(h\) generates and signs a valid claim \(x_h\) during `Prepare` within a given consensus instance, then, under the synchronous communication assumption and honest protocol compliance, that evidence is delivered to all honest nodes through `Merge`. Consequently, every honest node interprets the claim identically during `Conflict`.
-
-That is,
-
-\[
-\forall h,i\in H,\quad
-\mathrm{FinalClaim}_i(h)=x_h
-\]
+**Statement.** A Byzantine proposer can cause a consensus attempt to return `Reject` or fail to produce a commit certificate. However, this possibility alone does not imply that an invalid request can be committed.
 
 **Proof.**
 
-An honest node \(h\) generates a valid signature \(\sigma_h(x_h)\) for its claim \(x_h\) during `Prepare`. By signature unforgeability, no other node can forge or modify that signature.
+A Byzantine proposer may remain silent, send the request to only a subset of nodes, or send mutually inconsistent messages. Such behavior can prevent honest nodes from obtaining the evidence required for Prepare, Merge, or Conflict.
 
-The honest node reports its own claim during `Prepare`. Under the synchronous communication assumption and honest protocol compliance, the evidence is delivered to the other honest nodes. Subsequently, during `Merge`, each honest node exchanges its observed `Prepare` evidence with the other honest nodes. Therefore, the valid signature evidence generated by \(h\) is shared with every honest node.
+By Lemma B, if there are insufficient accepted claims, Conflict may return `Reject`. Therefore, if a Byzantine proposer is selected, that attempt may fail.
 
-Byzantine nodes may selectively deliver their own claims or collude with other Byzantine nodes. However, these actions cannot forge honest nodes' signatures or alter honest-node evidence that has already been shared.
+However, the failure of an attempt and the commitment of an invalid value are distinct problems. Provided the protocol requires a valid client-signed request belonging to the same consensus ID for both an accepted candidate and a valid commit certificate, and honest nodes verify that signature, the proposer cannot fabricate a new valid client request simply by proposing a different value.
 
-Furthermore, if a valid signature generated by an honest node \(h\) had a conflicting valid signature, this would contradict signature unforgeability and honest protocol compliance. Therefore, the claim is not invalidated on the grounds of equivocation.
+Therefore, the actions of a Byzantine proposer can cause an attempt to fail, whereas the safety claim that an invalid value cannot be committed must be derived from the request verification and commit certificate rules. $\square$
 
-Since all honest nodes possess the same signature evidence and apply the same verification and `Conflict` decision rules, they accept the claim as the same final claim.
+**Scope.** This lemma does not prove that every attempt with an honest proposer succeeds, nor that every attempt with a Byzantine proposer necessarily fails.
 
-\[
-\forall h,i\in H,\quad
-\mathrm{FinalClaim}_i(h)=x_h
-\]
+---
 
-Therefore, the statement holds. \(\square\)
+## Lemma D — Probability of Selecting an Honest Proposer
 
-## Lemma F — Agreement on Valid Conflict Results Among Honest Nodes
+**Statement.** If a proposer is selected uniformly at random from $2f+1$ nodes and the actual number of Byzantine nodes is $b\le f$, the probability of selecting an honest proposer is as follows:
 
-**Statement.** Even if Byzantine nodes equivocate or respond selectively during `Merge`, two different honest nodes cannot derive different valid candidate values (i.e., values other than `Reject`) as their final results during `Conflict`.
+$$
+\Pr[\text{honest proposer}]
+=\frac{2f+1-b}{2f+1}
+\ge \frac{f+1}{2f+1}>\frac12.
+$$
 
-\[
-\forall i,j\in H,\quad
-(C_i\ne\text{Reject}\land C_j\ne\text{Reject})
-\Rightarrow C_i=C_j
-\]
+If a proposer is selected independently and uniformly at random on each retry, the probability that an honest proposer is selected at least once across $k$ attempts is as follows:
 
-**Proof.**
-
-Partition the set of all nodes into the set of honest nodes \(H\), where \(|H|=f+1\), and the set of Byzantine nodes \(B\), where \(|B|\leq f\).
-
-1. **Consistency of honest-node claims.**
-
-   Each honest node \(h\in H\) generates a claim during `Prepare` and signs it with an unforgeable signature. Under the synchronous communication assumption and honest protocol compliance, the claim is shared identically with all honest nodes during `Merge`. Byzantine nodes cannot forge honest nodes' signatures. Therefore, all honest nodes \(i,j\in H\) derive exactly the same final claims for nodes belonging to \(H\).
-
-2. **Limitations of Byzantine claims and the majority quorum.**
-
-   Even if Byzantine nodes equivocate or remain silent during `Merge`, any resulting differences in the observed claims are confined to the claims of the at most \(f\) Byzantine nodes in \(B\). (However, if a Byzantine node sends conflicting signatures to two different honest nodes during `Prepare`, Lemma A ensures that all honest nodes treat that node's claim as `Unknown`.)
-
-   Suppose, for contradiction, that two honest nodes \(i,j\in H\) derive different valid candidate values \(v_1\ne v_2\), where \(v_1,v_2\ne\text{Reject}\).
-
-   According to the `Conflict` decision rule, a valid candidate value must be supported by at least the majority quorum \(Q=f+1\). Since there are at most \(f\) Byzantine nodes, at least one node in \(H\) must support \(v_1\) for node \(i\) to derive \(v_1\).
-
-   The final claims of honest nodes are observed identically by every honest node. Let \(k\) be the number of honest nodes in \(H\) that support \(v_1\), where \(k\geq1\). Node \(j\) must therefore count the same \(k\) honest nodes as supporting \(v_1\).
-
-   Consequently, at most \((f+1)-k\leq f\) honest nodes remain available to support a different value \(v_2\).
-
-   Furthermore, within a single consensus instance, the valid client-signed request is unique. Thus, honest nodes cannot simultaneously support two different valid values \(v_1\ne v_2\). Even if Byzantine nodes concentrate their votes on \(v_2\), they can contribute at most \(f\) votes. If Byzantine nodes send conflicting signatures supporting both \(v_1\) and \(v_2\) to honest nodes, Lemma A ensures that their claims are treated as `Unknown` and are not counted as votes.
-
-   Consequently, it is impossible for two different valid candidate values \(v_1\ne v_2\) to simultaneously obtain support of at least \(Q=f+1\) at two honest nodes.
-
-   Therefore, if \(C_i\ne\text{Reject}\) and \(C_j\ne\text{Reject}\), then \(C_i=C_j\). \(\square\)
-
-## Lemma G — Uniqueness of Committed Values
-
-**Statement.** Suppose that Lemma E holds, that honest nodes sign a value only when their final `Conflict` result is valid (i.e., not `Reject`), and that each honest node generates valid commit signatures for at most one value within the same consensus instance. Then two valid commit certificates for different values cannot coexist.
-
-That is,
-
-\[
-Cert(v_1)\land Cert(v_2)\Rightarrow v_1=v_2
-\]
+$$
+\Pr[\text{honest proposer selected at least once}]
+=1-\left(\frac{b}{2f+1}\right)^k
+\ge 1-\left(\frac{f}{2f+1}\right)^k.
+$$
 
 **Proof.**
 
-Assume, for contradiction, that two valid commit certificates \(Cert(v_1)\) and \(Cert(v_2)\) exist simultaneously for distinct values \(v_1\ne v_2\).
+Out of a total of $2f+1$ nodes, there are $2f+1-b$ honest nodes. Under uniform selection, the probability of selecting an honest proposer in a single attempt is as stated.
 
-Each certificate contains valid signatures from \(Q=f+1\) distinct nodes. Since there are at most \(f\) Byzantine nodes, each certificate must contain at least one honest node's signature.
+In $k$ independent selections, the probability that a Byzantine proposer is selected every time is $(b/(2f+1))^k$. Taking the complement yields the probability that an honest proposer is selected at least once. Since $b\le f$, the stated lower bound holds. $\square$
 
-Let \(h_1,h_2\in H\) be honest nodes that signed \(v_1\) and \(v_2\), respectively. Since honest nodes sign a value only when their final `Conflict` result is valid (i.e., not `Reject`),
+**Scope.** This is the proposer selection probability, not a probability guaranteeing consensus success. Even if an honest proposer is selected, message delivery, timing, and evidence conditions must be satisfied for the attempt to progress.
 
-\[
-C_{h_1}=v_1\ne\text{Reject},
-\qquad
-C_{h_2}=v_2\ne\text{Reject}.
-\]
+---
 
-However, by Lemma E, if the `Conflict` results of two honest nodes are both different from `Reject`, those results must be identical:
+## Lemma E — Uniqueness of the Valid Client-Signed Request Value
 
-\[
-C_{h_1}=C_{h_2}.
-\]
+**Statement.** For a single consensus ID, an honest client signs at most one request value, and an attacker cannot forge a valid client signature for a different value under the same consensus ID.
 
-It follows that \(v_1=v_2\), contradicting the initial assumption that \(v_1\ne v_2\).
+**Proof.**
 
-Therefore, two valid commit certificates for different values cannot coexist within the same consensus instance. \(\square\)
+The client signature is bound to the request value and the consensus ID. We assume that an honest client signs only the intended request for that instance. By the unforgeability of signatures, a Byzantine node cannot generate a valid client signature for a conflicting value under the same consensus ID.
+
+Therefore, for a given consensus ID, at most one request value can pass valid client signature verification. $\square$
+
+**Scope.** This lemma applies to a single consensus ID. It does not guarantee that different retry IDs represent the same logical application request.
+
+---
+
+## Lemma F — An Invalid Request Value Cannot Obtain a Valid Commit Certificate
+
+**Statement.** If a valid commit certificate requires $Q=f+1$ signatures from distinct nodes bound to the same consensus ID and request, and every honest node signs only candidates possessing a valid client signature, then a value without a valid client signature cannot obtain a valid commit certificate.
+
+**Proof.**
+
+Consider a value $v'$ that lacks a valid client signature for the given consensus ID.
+
+By protocol rules, honest nodes do not sign $v'$. Consequently, only Byzantine nodes can provide signatures for a certificate on $v'$. Since there are at most $f$ Byzantine nodes, at most $f$ signatures from distinct Byzantine nodes can be gathered.
+
+A valid certificate requires signatures from $Q=f+1$ distinct nodes. Because $f<Q$, Byzantine nodes alone cannot form such a certificate.
+
+Therefore, an invalid request value cannot obtain a valid commit certificate. $\square$
+
+**Scope.** This lemma rules out the commitment of values lacking a valid client signature. By itself, it does not prove the stronger claim that all honest nodes agree across all possible valid commit certificates. For that stronger claim, one must show via the candidate selection and commit rules that honest nodes cannot sign conflicting valid candidates.
+
+---
+
+## Lemma G — Progress Under an Honest Proposer and Complete Honest Evidence Exchange
+
+**Statement.** Suppose the following conditions hold:
+
+1. $n=2f+1$ and there are at least $f+1$ honest nodes.
+2. An honest proposer delivers a valid client-signed request $v^*$ to all honest nodes.
+3. Every honest node verifies the client signature and signs a Prepare claim for $v^*$.
+4. Merge delivers the Prepare evidence of honest nodes to all honest nodes.
+5. Synchronous communication and phase stability conditions are satisfied.
+6. Conflict aggregates only accepted claims from distinct node IDs and requires $Q=f+1$ claims for a candidate.
+
+Then every honest node accepts $v^*$ as the final Conflict candidate. Cooperation from Byzantine nodes is not required.
+
+**Proof.**
+
+**Step 1 — Prepare Claims of Honest Nodes**
+
+The honest proposer delivers $v^*$ to all honest nodes. Each honest node verifies the client signature and signs a Prepare claim for $v^*$.
+
+**Step 2 — Classification of Honest Target Nodes**
+
+By the completeness assumption of Merge, every honest observer receives the signed Prepare evidence of every honest node.
+
+Fix an arbitrary honest target node $j$. Because honest node $j$ signs only a claim for $v^*$, only $v^*$ exists in the valid signature evidence attributable to $j$. Therefore, for every honest observer $i$,
+
+$$
+I_i^{(j)}=\{v^*\}
+$$
+
+holds.
+
+Furthermore, the honest proposer delivers $v^*$ to all honest nodes, and each honest node $j$ transmits its $v^*$ claim to all honest nodes during the Prepare phase. Under the synchronous communication assumption, this message arrives at each honest observer $i$, so
+
+$$
+p_i^{(j)}=v^*
+$$
+
+holds. Thus, the direct Prepare observation matches the unique valid signed claim.
+
+By the Conflict rules of Lemma A, every honest observer accepts the claim of every honest target node as $v^*$.
+
+**Step 3 — Conflict Aggregation**
+
+There are at least $f+1$ honest nodes. Consequently, each honest observer holds at least $f+1$ accepted claims from distinct honest node IDs supporting $v^*$.
+
+Hence,
+
+$$
+C_i(v^*)\ge f+1=Q.
+$$
+
+By the Conflict aggregation rules, every honest node selects $v^*$ as its final candidate instead of `Reject`.
+
+Therefore, under the stated assumptions, all honest nodes select $v^*$ in Conflict. $\square$
+
+**Observation on Worst-Case Conditions.** Even if there are exactly $f+1$ honest nodes and all $f$ Byzantine nodes remain silent, as long as the claims of all honest nodes are accepted,
+
+$$
+C_i(v^*)=f+1=Q
+$$
+
+holds, so Conflict succeeds. Thus, in this case, progress depends on the claims of all honest nodes being accepted without omission. If even a single honest node's claim is not accepted, that observer's tally may fall short of $Q$, resulting in `Reject`.
+
+**Scope.** This theorem is a conditional progress result holding under the assumptions of an honest proposer, request delivery to all honest nodes, complete sharing of honest Prepare evidence, synchronous communication, and phase stability. In particular, under the worst-case condition where all Byzantine nodes are silent, the claims of all $f+1$ honest nodes must be accepted. This theorem alone does not guarantee the success of every attempt or commit confirmation by the client within bounded time.
+
+---
+
+## Lemma H — Phase Timer Lower Bound for Collecting Honest Evidence
+
+**Statement.** Suppose an honest node starts a response collection timer after completing its local phase computation and sending its messages for that phase. If the message delay between honest nodes is at most $\Delta$, and $\epsilon$ upper-bounds the relevant local processing and scheduling slack, then a timer satisfying the following condition is sufficient to wait for honest responses under the assumed phase entry and message transmission conditions:
+
+$$
+s_t\ge\Delta+\epsilon.
+$$
+
+On the other hand, if the timer is measured from a common reference point, the upper bound $\delta_t$ on the difference in completion times among honest nodes must also be accounted for. For example:
+
+$$
+s_t\ge\delta_t+\Delta+\epsilon.
+$$
+
+**Proof.**
+
+Under the local timer scheme, the timer starts after an honest node completes its local phase computation and sends its messages. Honest responses are sent according to the rules of that phase, and message delay between honest nodes is at most $\Delta$. The additional slack $\epsilon$ accounts for the assumed local processing and scheduling effects. Therefore, under these assumptions, $s_t\ge\Delta+\epsilon$ is sufficient.
+
+Under a common-reference timer, honest nodes may begin phase operations at different times. Thus, the maximum difference in completion times among honest nodes must be included in the timer lower bound, yielding $s_t\ge\delta_t+\Delta+\epsilon$.
+
+If a Byzantine node does not respond before the timeout, the observation for that node may be treated as `Unknown`. `Unknown` means that the node's claim was not accepted; it does not by itself signify a Byzantine judgment or a reduction in quorum size. If silence causes no candidate to secure $Q=f+1$ accepted claims from distinct nodes, Conflict may return `Reject`.
+
+Conversely, even if all $f$ Byzantine nodes remain silent, if the claims of all $f+1$ honest nodes are accepted, those claims alone satisfy the quorum. This aligns with the worst-case analysis of Lemma G. $\square$
+
+**Scope.** The validity of this numerical lower bound depends on the definitions of $\Delta$, $\epsilon$, and $\delta_t$, as well as the exact event that triggers the timer in an actual implementation.
+
+---
+
+## Lemma I — Sharing Merge Evidence Alone Does Not Guarantee Identical Conflict Outcomes
+
+**Statement.** If all honest observers receive the exact same set of Merge evidence for target node $j$, then $I_i^{(j)}$ is identical for all observers. However, if the direct Prepare observations $p_i^{(j)}$ can differ, the fact that the Merge evidence is identical does not by itself guarantee that the Conflict classification is also identical.
+
+**Proof.**
+
+If all honest observers receive the same set of evidence for target node $j$ and apply the same signature verification rules, the subset containing valid signed claims is also identical across all observers. Therefore, the set $I_i^{(j)}$ is identical.
+
+However, when there is a single valid claim, the Conflict rule compares that claim against the observer's direct Prepare observation $p_i^{(j)}$. If two observers have different direct Prepare observations, one observer may satisfy the matching condition while the other does not.
+
+Therefore, identical Merge evidence guarantees identical $I$ sets, but does not guarantee that the final classification of the target node is identical. $\square$
+
+**Corollary for an Honest Proposer.** Under the assumptions of Lemma G, all honest observers directly receive a valid request from the honest proposer, and the claims of honest target nodes are consistent. Consequently, potential issues arising from differing direct Prepare observations do not obstruct the conclusion of Lemma G.
+
+**Remaining Proof Obligation.** For Byzantine target nodes, one must prove either that the Merge and Conflict rules prevent differing direct Prepare observations from producing conflicting accepted candidates, or separately prove that such differences cannot violate the desired safety properties.
+
+---
+
+## Lemma J — Retry IDs and Cross-Instance Idempotency
+
+**Statement.** Uniqueness of the request value per consensus instance alone cannot guarantee that a logical request is executed exactly once across retries that use different consensus IDs.
+
+**Proof.**
+
+By Lemma E, within a single consensus ID, the valid client-signed request value is unique. Suppose, however, that a client retries the same logical application request using a new consensus ID. Because the new instance is distinct from the previous instance, Lemma E alone cannot prove whether the two instances represent the same logical operation or whether that operation is applied only once.
+
+Therefore, if a new consensus ID is used for each retry, guaranteeing exactly-once execution across retries requires an application-level mechanism—such as using a stable request identifier in the state machine or log and performing persistent idempotency checks. Per-instance safety of the protocol alone cannot prevent duplicate execution across instances. $\square$
+
+**Alternative Condition.** If a retry retains the same consensus ID and the same client-signed request, the uniqueness result of Lemma E can continue to apply to that instance. Even so, how duplicate messages and repeated commit certificates are handled must still be specified in the implementation specification.
+
+---
+
+## Summary of Dependencies Among Lemmas
+
+| Lemma | Main Result | Key Condition |
+|---|---|---|
+| A | Classifies as `Unknown` if conflicting signatures or mismatches exist | Valid signature verification and matching direct Prepare observation |
+| B | Silence can prevent progress | Missing claims are not included in the quorum |
+| C | A Byzantine proposer can cause an attempt to fail | Attempt failure is separate from committing an invalid value |
+| D | Probability of selecting an honest proposer is at least $(f+1)/(2f+1)$ | Uniform and independent random selection |
+| E | At most one valid client-signed value per consensus ID | Honest client and signature unforgeability |
+| F | An invalid request value cannot obtain a $Q=f+1$ certificate | Honest nodes do not sign invalid requests |
+| G | Selects a common Conflict candidate under an honest proposer and complete honest evidence exchange | Merge completeness, synchrony, and aggregation by distinct node IDs |
+| H | Timer lower bound allows waiting for honest responses | Accurate upper bounds on delay, completion skew, and processing time |
+| I | Sharing Merge evidence alone may not yield identical Conflict results | Direct Prepare observations also affect the outcome |
+| J | Per-instance uniqueness does not guarantee cross-instance exactly-once execution | Stable application request ID or equivalent idempotency mechanism |
+
+---
+
+## Overall Proof Status
+
+Under the assumptions stated in each lemma, the following claims are supported:
+
+1. `Unknown` is distinct from a Byzantine judgment and does not lower the quorum threshold.
+2. Within the same consensus ID, a valid client-signed request cannot be replaced by an unsigned or forged request value.
+3. Provided honest nodes do not sign invalid requests, an invalid request value cannot obtain a valid commit certificate requiring $f+1$ signatures.
+4. Under the conditions of Lemma G, all honest nodes select the same valid candidate in Conflict.
+5. Random proposer selection provides a lower bound on the probability of selecting an honest proposer, but does not by itself guarantee final commitment.
+6. If a new consensus ID is used for each retry, application-level idempotency is required for exactly-once execution across instances.
+
+**Additional Proof Obligations for a Complete Byzantine Consensus Claim:** The concrete message rules of Merge must actually guarantee the required evidence-sharing conditions. Furthermore, it must be proven that direct Prepare observations and conflicting signatures from Byzantine nodes cannot produce conflicting valid candidates. Finally, it must be shown that the Commit and certificate propagation rules guarantee the desired agreement and confirmation properties. The mere existence of a certificate with $f+1$ signatures does not automatically entail all of these properties.
