@@ -124,143 +124,217 @@
 ---
 # MBQ — Supporting Lemmas
 
+## Scope of This Document
+
+This document addresses only the supporting lemmas of the MBQ protocol. The following proof obligations are reserved for the main theorem:
+
+- Guaranteeing evidence dissemination through Merge relay rules and the number of protocol rounds.
+- Proving that, under an honest proposer, all honest nodes accept $v^*$ and satisfy $C_i(v^*)\geq Q$.
+- Establishing the safety of Conflict classification for Byzantine target nodes, including candidate divergence caused by different values of $p$.
+- Commit and commit-certificate propagation rules.
+
+---
+
 ## Definitions and Notation
 
-Let the system contain \(n=2f+1\) nodes, of which at most \(f\) may be Byzantine. The commit quorum is \(Q=f+1\).
+The system consists of $n=2f+1$ nodes, of which at most $f$ may be Byzantine. The commit quorum is $Q=f+1$.
 
-For a given consensus instance:
+For a given consensus instance, the following notation is used:
 
-- A **valid claim** is a claim accompanied by a valid node signature and associated with the current consensus instance.
-- \(O\) denotes the observation set collected through the Merge phase for a target node.
-- \(I\) denotes the subset of \(O\) containing signed claims attributed to that target node.
-- \(p\) denotes the claim received directly from that target node during the Prepare phase.
-- `Unknown` indicates that no sufficiently verifiable claim is available. It is not a vote for any candidate value.
-- `Reject` indicates that no candidate satisfies the acceptance condition.
-- A **commit certificate** consists of \(f+1\) valid node signatures for the same client request and consensus instance.
+- **Valid Claim:** A claim belonging to the current consensus instance and containing both a valid node signature and a valid client request signature.
+- $O$: The observation set collected for a target node during the Merge phase.
+- $I$: The subset of $O$ containing claims for which both the target node's signature and the corresponding client request signature have been successfully verified.
+- $p$: The claim directly received from the target node during the Prepare phase.
+- `Unknown`: A state in which no sufficiently verifiable claim is available. It does not represent a vote for any candidate value.
+- `Reject`: A state in which no candidate satisfies the acceptance condition.
+- **Commit Certificate:** A certificate containing $f+1$ valid node signatures corresponding to distinct node IDs for the same client request and consensus instance.
+- $C_i(v)$: The number of valid commit signatures for candidate value $v$ collected by node $i$. Signatures from the same node ID are not counted more than once.
+- $\Delta$: The maximum message-delivery delay between honest nodes under the synchrony assumption.
+- $s_t$: The timer configuration for the corresponding protocol phase.
+- $\epsilon$: A positive safety margin accounting for message processing and timer expiration, where $\epsilon>0$.
+- $b$: The actual number of Byzantine nodes, where $0\leq b\leq f$.
+- $k$: The number of independent proposer-selection attempts.
 
 All signatures are assumed to be unforgeable and bound to their corresponding messages and consensus instances.
+
+**Protocol Signing Rule:** An honest node generates a consensus signature for a request only if the client request signature is valid and the request satisfies the protocol's validity conditions.
+
+**Commit Aggregation Rule:** Node $i$ commits candidate value $v$ when the number of valid commit signatures collected from distinct node IDs satisfies:
+
+$$
+C_i(v)\geq Q
+$$
+
+If no candidate satisfies this condition when collection is complete, the consensus attempt is classified as `Reject`.
 
 ---
 
 ## Lemma A — Detection of Target-Node Equivocation
 
-**Statement.** If the Merge observation set \(O\) contains two or more distinct valid signed claims attributed to the same target node, that target node's equivocation can be detected.
+**Statement.** If the Merge observation set $O$ contains two or more distinct valid signed claims attributed to the same target node, that target node's equivocation can be detected.
 
-**Proof.** Since each claim is accompanied by a valid signature, the claims can be attributed to the target node. If at least two distinct claims are present, the target node has signed conflicting claims within the same consensus instance. Therefore, the node's equivocation is detectable by comparing the signed claims in \(O\). \(\square\)
+**Proof.** Each claim contains a valid signature, allowing it to be attributed to the target node. If two or more distinct claims exist, the target node has signed conflicting claims within the same consensus instance.
 
-## Lemma B — Silence Can Produce an Unknown Classification
+Therefore, the target node's equivocation can be detected by comparing the signed claims contained in $O$. $\square$
 
-**Statement.** A node that remains silent during the relevant protocol phases may be classified as `Unknown`, and such a classification does not contribute to any candidate's quorum.
+## Lemma B — Unknown Classification Due to Silence
 
-**Proof.** If no verifiable signed claim from a target node is received, the observation set contains no valid claim attributable to that node. Thus, \(|I|=0\), resulting in an `Unknown` classification.
+**Statement.** A node that remains silent during the relevant protocol phases may be classified as `Unknown`, and such a classification does not contribute to the quorum of any candidate value.
 
-Since `Unknown` is not a vote for any candidate, it cannot increase the number of signatures supporting a candidate. Consequently, silence may prevent a candidate from reaching the required quorum. \(\square\)
+**Proof.** If no verifiable signed claim is received from a target node, the observation set contains no valid claim attributable to that node. Therefore, $|I|=0$, and the target node is classified as `Unknown`.
 
-## Lemma C — A Byzantine Proposer Can Cause an Attempt to Fail
+Since `Unknown` does not represent a vote for any candidate, it does not increase the number of signatures supporting a candidate. Consequently, silence may prevent a candidate from reaching the required quorum. $\square$
+
+## Lemma C — Failure of a Consensus Attempt Caused by a Byzantine Proposer
 
 **Statement.** A Byzantine proposer can cause a consensus attempt to fail without necessarily violating the safety of the protocol.
 
-**Proof.** A Byzantine proposer may selectively distribute its proposal, remain silent toward some nodes, or provide inconsistent information to different participants. These actions may prevent honest nodes from obtaining sufficient consistent evidence to accept a candidate.
+**Proof.** A Byzantine proposer may selectively distribute its proposal, remain silent toward some nodes, or provide inconsistent information to different participants. These actions may prevent honest nodes from obtaining sufficient and consistent evidence to accept a candidate.
 
-In such a case, the honest nodes may classify the relevant observations as `Unknown` or otherwise fail to establish an acceptable candidate. Therefore, the current consensus attempt may terminate without a commit.
+In such a case, honest nodes may classify the relevant observations as `Unknown` or fail to establish an acceptable candidate. Consequently, the current consensus attempt may terminate without reaching commitment.
 
-This is a failure of progress for the current attempt, not necessarily a safety violation: the protocol does not need to commit a value when the required evidence is unavailable. \(\square\)
+This constitutes a progress failure for the current consensus attempt, but does not necessarily imply a safety violation. It is consistent with safety for the protocol not to commit a value when the required evidence is unavailable. $\square$
 
-## Lemma D — Probability of Selecting an Honest Proposer
+## Lemma D — Probability of Selecting an Honest Proposer and Retrying
 
-**Statement.** If the proposer is selected uniformly at random from all \(2f+1\) nodes, and at most \(f\) nodes are Byzantine, the probability of selecting an honest proposer is at least
-
-$$
-P(\text{honest proposer}) =
-\frac{f+1}{2f+1}.
-$$
-
-**Proof.** There are \(2f+1\) nodes in total. Since at most \(f\) are Byzantine, at least \(f+1\) are honest.
-
-Under uniform random selection, the probability of selecting an honest node is therefore at least
+**Statement.** If the proposer is selected uniformly at random from all $2f+1$ nodes, and the actual number of Byzantine nodes is $b$, the probability of selecting an honest proposer in a single attempt is:
 
 $$
-\frac{f+1}{2f+1}.
+P(\text{honest proposer})
+=
+1-\frac{b}{2f+1}
+=
+\frac{2f+1-b}{2f+1}
+\geq
+\frac{f+1}{2f+1}
 $$
 
-\(\square\)
+Furthermore, if proposer selections in successive attempts are independent, the probability of selecting an honest proposer at least once within $k$ attempts is:
 
-## Lemma E — Uniqueness of a Valid Client-Signed Request per Consensus Instance
+$$
+P(\text{at least one honest proposer})
+=
+1-\left(\frac{b}{2f+1}\right)^k
+$$
 
-**Statement.** Under the assumption that a client issues at most one request for each consensus instance identifier, two different request values cannot both be validly authenticated as the client's request for the same instance.
+**Proof.** There are $2f+1$ nodes in total, of which $b$ are Byzantine. Therefore, the number of honest nodes is $2f+1-b$.
 
-**Proof.** A valid request must contain the client's signature over the request and its associated consensus instance identifier.
+Under uniform random selection, the probability of selecting an honest proposer is:
 
-By the assumption, the client issues at most one request for a given instance identifier. Since the signature is unforgeable, another participant cannot create a valid client signature for a different request value under that same identifier.
+$$
+P(\text{honest proposer})
+=
+\frac{2f+1-b}{2f+1}
+=
+1-\frac{b}{2f+1}
+$$
 
-Therefore, two distinct request values cannot both be validly authenticated as the client's request for the same consensus instance. \(\square\)
+Since $b\leq f$, the following lower bound holds:
 
-## Lemma F — An Invalid Request Cannot Obtain a Valid Commit Certificate
+$$
+P(\text{honest proposer})
+\geq
+\frac{f+1}{2f+1}
+$$
 
-**Statement.** If honest nodes refuse to sign an invalid client request, an invalid request cannot obtain a valid commit certificate containing \(Q=f+1\) signatures.
+The probability of selecting a Byzantine proposer in a single attempt is $\frac{b}{2f+1}$. Since selections are independent across attempts, the probability that all $k$ attempts select Byzantine proposers is:
 
-**Proof.** At most \(f\) nodes are Byzantine. Therefore, even if every Byzantine node signs the invalid request, the request can obtain at most \(f\) signatures.
+$$
+P(\text{all Byzantine proposers})
+=
+\left(\frac{b}{2f+1}\right)^k
+$$
 
-Honest nodes do not sign an invalid client request. Hence, the total number of valid signatures for that request cannot exceed \(f\).
+Therefore, by taking the complement, the probability of selecting an honest proposer at least once within $k$ attempts is:
 
-Since a commit certificate requires \(f+1\) valid signatures, the invalid request cannot obtain a valid commit certificate. \(\square\)
+$$
+P(\text{at least one honest proposer})
+=
+1-\left(\frac{b}{2f+1}\right)^k
+$$
+
+$\square$
+
+## Lemma E — Uniqueness of a Valid Client Request per Consensus Instance
+
+**Statement.** Assuming that a client issues at most one request for each consensus instance identifier, two different request values cannot both be authenticated as valid client requests for the same instance identifier.
+
+**Proof.** A valid request must contain the client's signature over the request content and its associated consensus instance identifier.
+
+By assumption, the client issues at most one request for a given instance identifier. Furthermore, since signatures are unforgeable, another participant cannot generate a valid client signature for a different request value under the same identifier.
+
+Therefore, two distinct request values cannot both be authenticated as valid client requests for the same consensus instance identifier. $\square$
+
+## Lemma F — Impossibility of Obtaining a Commit Certificate for an Invalid Request
+
+**Statement.** If honest nodes do not sign invalid client requests, an invalid request cannot obtain a valid commit certificate containing $Q=f+1$ signatures.
+
+**Proof.** At most $f$ nodes are Byzantine. Therefore, even if every Byzantine node signs the invalid request, the request can obtain at most $f$ signatures.
+
+According to the protocol signing rule, honest nodes do not sign invalid client requests. Thus, the total number of valid signatures for the request cannot exceed $f$.
+
+Since a commit certificate requires $f+1$ valid signatures corresponding to distinct node IDs, an invalid request cannot obtain a valid commit certificate. $\square$
 
 ## Lemma G — Lower Bound on Phase Timers
 
-**Statement.** Under synchrony, a phase timer must be configured to account for the maximum permitted message-delivery delay between honest nodes. Otherwise, an honest message may be treated as missing even though it is still within the system's synchrony bound.
+**Statement.** Under the synchrony assumption, a sufficient condition for preventing honest messages from being classified as missing due to timeout is that the phase timer satisfies:
 
-**Proof.** Let \(\Delta\) denote the maximum message-delivery delay between honest nodes under the synchrony assumption.
+$$
+s_t\geq\Delta+\epsilon
+$$
 
-If a phase timer expires before the permitted delivery interval has elapsed, an honest message sent within the synchrony bound may arrive after the receiver has already classified the corresponding observation as missing.
+where $\Delta$ is the maximum message-delivery delay between honest nodes and $\epsilon>0$ is a margin for message processing and timer expiration.
 
-Such a classification may produce `Unknown` despite the sender being honest and the message being delivered within the assumed network bound.
+**Proof.** Under the synchrony assumption, a message sent by an honest node is delivered to another honest node within at most $\Delta$ time.
 
-Therefore, phase timers must account for the synchrony bound to avoid treating permitted honest-message delays as evidence of silence. \(\square\)
+Therefore, if the timer satisfies $s_t\geq\Delta+\epsilon$, it provides sufficient time for an honest message to arrive within the permitted delivery bound.
 
-## Lemma H — Merge Evidence Exchange Alone Does Not Guarantee Identical Conflict Classification
+Conversely, if the timer expires before the permitted delivery interval has elapsed, an honest message may be classified as missing even though it is delivered within the synchrony bound.
 
-**Statement.** The exchange of Merge evidence alone does not guarantee that all honest nodes produce the same Conflict classification unless the relevant observations and Prepare claims used in the classification are consistent.
+In this case, timeout merely causes the corresponding observation to be classified as `Unknown`. It does not imply that the Byzantine node's silence violates the synchrony bound $\Delta$.
 
-**Proof.** Conflict classification depends on both the signed claims contained in the observation set \(O\) and the claim \(p\) received directly from the target node during Prepare.
+Therefore, $s_t\geq\Delta+\epsilon$ is a sufficient condition for preventing an honest message from being classified as missing solely due to an allowed delivery delay. $\square$
 
-In particular, the classification rules distinguish the following cases:
+## Lemma H — Merge Evidence Exchange Alone Does Not Guarantee Identical Conflict Classifications
 
-- If \(|I|=0\), the target is classified as `Unknown`.
-- If \(|I|=1\) and \(p=i\), where \(i\) is the sole claim in \(I\), the claim is accepted.
-- If \(|I|\geq 2\), the target is classified as equivocating.
+**Statement.** If the relevant observations and Prepare claims used for classification are inconsistent, the exchange of evidence during the Merge phase alone cannot guarantee that all honest nodes produce identical Conflict classifications.
 
-Consequently, merely exchanging evidence during Merge does not establish identical classifications if honest nodes do not use consistent observation sets and Prepare claims. Different inputs to the classification rules may produce different results.
+**Proof.** Conflict classification depends on both the signed claims contained in the observation set $O$ and the claim $p$ directly received from the target node during the Prepare phase.
 
-Thus, Merge evidence exchange alone is insufficient to guarantee identical Conflict classifications. \(\square\)
+The classification rules are as follows:
 
-## Lemma I — Retry Identifiers Prevent Cross-Instance Confusion
+- If $|I|=0$, the target node is classified as `Unknown`.
+- If $|I|=1$ and $p=i$, where $i$ is the only claim in $I$, the claim is accepted.
+- If $|I|=1$ and $p=\text{Unknown}$, the target node is classified as `Unknown`.
+- If $|I|=1$ and $p\neq i$, where $p$ is a distinct validly signed conflicting claim, the target node is classified as equivocating.
+- If $|I|\geq 2$, the target node is classified as equivocating.
 
-**Statement.** If each retry is assigned a distinct consensus instance identifier and signatures are bound to that identifier, messages and certificates from an earlier attempt cannot be treated as valid evidence for a later attempt.
+For example, suppose two honest nodes obtain the same Merge observation set, such that $I=\{v^*\}$. However, one node received $p=v^*$ during Prepare, while the other observed $p=\text{Unknown}$. The former accepts $v^*$, whereas the latter returns `Unknown`.
 
-**Proof.** By Lemma E, a valid client-signed request is associated with its consensus instance identifier. Likewise, node signatures are bound to the corresponding consensus instance.
+Therefore, evidence exchange during the Merge phase alone cannot guarantee identical Conflict classifications across all honest nodes. $\square$
 
-When a retry uses a new identifier, messages and signatures from the previous attempt refer to a different instance. Therefore, they cannot be reused as valid evidence for the new attempt.
+## Lemma I — Preventing Cross-Instance Message Confusion Through Retry Identifiers
 
-This prevents messages or commit certificates from one attempt from being confused with those of another attempt. \(\square\)
+**Statement.** If each retry is assigned a distinct consensus instance identifier and signatures are bound to that identifier, messages and certificates from a previous attempt cannot be treated as valid evidence for a subsequent attempt. However, this mechanism alone does not guarantee exactly-once execution or prevent duplicate execution across instances.
+
+**Proof.** By Lemma E, a valid client-signed request is bound to its consensus instance identifier. Likewise, node signatures are bound to their corresponding consensus instances.
+
+When a retry uses a new identifier, messages and signatures from the previous attempt refer to a different instance. Therefore, those messages and signatures cannot be reused as valid evidence in the new attempt.
+
+However, a new identifier only distinguishes the previous instance from the new one. It does not, by itself, prevent the same logical request from being executed across different instances. Consequently, this identifier mechanism alone cannot guarantee exactly-once execution or prevent duplicate execution across instances. $\square$
 
 ---
 
 ## Dependency Summary
 
-| Lemma | Main dependency |
-|---|---|
-| A | Unforgeable node signatures; Merge observations |
-| B | `Unknown` classification; quorum definition |
-| C | Byzantine proposer behavior; evidence requirements |
-| D | Uniform random proposer selection; \(n=2f+1\) |
-| E | Client request uniqueness per instance; unforgeable client signatures |
-| F | At most \(f\) Byzantine nodes; \(Q=f+1\); honest-node validation |
-| G | Synchrony bound \(\Delta\); phase timers |
-| H | Conflict classification rules; consistency of \(O\) and \(p\) |
-| I | Lemma E; instance-bound signatures and identifiers |
-
-## Proof Status and Scope
-
-These lemmas establish supporting properties concerning equivocation detection, silence, proposer failure, proposer-selection probability, request validity, quorum requirements, phase timers, Merge evidence, and retry isolation.
-
-They do not, individually or collectively, constitute the main theorem establishing successful commitment under an honest proposer. That argument is reserved for the main theorem.
+| Lemma   | Main Dependencies                                                                     |
+|---------|---------------------------------------------------------------------------------------|
+| Lemma A | Unforgeable node signatures; Merge observations                                       |
+| Lemma B | `Unknown` classification rule; quorum definition                                      |
+| Lemma C | Byzantine proposer behavior; evidence requirements                                    |
+| Lemma D | Uniform random proposer selection; $n=2f+1$; independent retries                      |
+| Lemma E | Client request uniqueness per instance; unforgeable client signatures                 |
+| Lemma F | At most $f$ Byzantine nodes; $Q=f+1$; honest-node request validation and signing rule |
+| Lemma G | Synchrony bound $\Delta$; phase timer $s_t$; margin $\epsilon$                        |
+| Lemma H | Conflict classification rules; consistency of $O$ and $p$                             |
+| Lemma I | Lemma E; instance-bound signatures and identifiers                                    |
