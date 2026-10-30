@@ -195,65 +195,75 @@ In such a case, honest nodes may classify the relevant observations as `Unknown`
 
 This constitutes a progress failure for the current consensus attempt, but does not necessarily imply a safety violation. It is consistent with safety for the protocol not to commit a value when the required evidence is unavailable. $\square$
 
-## Lemma D — Probability of Selecting an Honest Proposer and Retrying
+## Lemma D — Honest Proposer Selection Probability and Retries
 
-**Statement.** If the proposer is selected uniformly at random from all $2f+1$ nodes, and the actual number of Byzantine nodes is $b$, the probability of selecting an honest proposer in a single attempt is:
+**Statement.** Let the total number of nodes be \(2f+1\), and suppose that the proposer is selected uniformly at random. Let \(b\) denote the actual number of Byzantine nodes. The probability that an honest proposer is selected in a single attempt is:
 
 $$
 P(\text{honest proposer})
-=
-1-\frac{b}{2f+1}
-=
-\frac{2f+1-b}{2f+1}
-\geq
-\frac{f+1}{2f+1}
+= \frac{2f+1-b}{2f+1}
+= 1-\frac{b}{2f+1}
 $$
 
-Furthermore, if proposer selections in successive attempts are independent, the probability of selecting an honest proposer at least once within $k$ attempts is:
+Since \(b\leq f\), the following lower bound holds:
+
+$$
+P(\text{honest proposer})
+\geq \frac{f+1}{2f+1}
+$$
+
+Furthermore, if proposer selections across attempts are independent, the probability that at least one honest proposer is selected within \(k\) attempts is:
 
 $$
 P(\text{at least one honest proposer})
-=
-1-\left(\frac{b}{2f+1}\right)^k
+= 1-\left(\frac{b}{2f+1}\right)^k
 $$
 
-**Proof.** There are $2f+1$ nodes in total, of which $b$ are Byzantine. Therefore, the number of honest nodes is $2f+1-b$.
+**Proof.** There are \(2f+1\) nodes in total, of which \(b\) are Byzantine. Therefore, the number of honest nodes is \(2f+1-b\).
 
-Under uniform random selection, the probability of selecting an honest proposer is:
-
-$$
-P(\text{honest proposer})
-=
-\frac{2f+1-b}{2f+1}
-=
-1-\frac{b}{2f+1}
-$$
-
-Since $b\leq f$, the following lower bound holds:
+Since the proposer is selected uniformly at random, the probability of selecting an honest proposer is:
 
 $$
 P(\text{honest proposer})
-\geq
-\frac{f+1}{2f+1}
+= \frac{2f+1-b}{2f+1}
 $$
 
-The probability of selecting a Byzantine proposer in a single attempt is $\frac{b}{2f+1}$. Since selections are independent across attempts, the probability that all $k$ attempts select Byzantine proposers is:
+Rearranging this expression gives:
+
+$$
+P(\text{honest proposer})
+= 1-\frac{b}{2f+1}
+$$
+
+Since \(b\leq f\), the following lower bound holds:
+
+$$
+P(\text{honest proposer})
+\geq \frac{f+1}{2f+1}
+$$
+
+Meanwhile, the probability of selecting a Byzantine proposer in a single attempt is:
+
+$$
+P(\text{Byzantine proposer})
+= \frac{b}{2f+1}
+$$
+
+Because proposer selections across attempts are independent, the probability that all \(k\) attempts select Byzantine proposers is:
 
 $$
 P(\text{all Byzantine proposers})
-=
-\left(\frac{b}{2f+1}\right)^k
+= \left(\frac{b}{2f+1}\right)^k
 $$
 
-Therefore, by taking the complement, the probability of selecting an honest proposer at least once within $k$ attempts is:
+Therefore, by considering the complementary event, the probability that at least one honest proposer is selected within \(k\) attempts is:
 
 $$
 P(\text{at least one honest proposer})
-=
-1-\left(\frac{b}{2f+1}\right)^k
+= 1-\left(\frac{b}{2f+1}\right)^k
 $$
 
-$\square$
+\(\square\)
 
 ## Lemma E — Uniqueness of a Valid Client Request per Consensus Instance
 

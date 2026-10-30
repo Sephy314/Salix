@@ -198,24 +198,26 @@ $$
 
 ## Lemma D — 정직한 제안자 선택 확률 및 재시도
 
-**명제.** 전체 $2f+1$개 노드 중에서 제안자를 균등 무작위로 선택하고, 실제 Byzantine 노드의 수가 $b$라면 단일 시도에서 정직한 제안자가 선택될 확률은 다음과 같다.
+**명제.** 전체 노드 수가 $2f+1$이고, 제안자를 균등 무작위로 선택한다고 하자. 실제 Byzantine 노드의 수를 $b$라고 하면, 단일 시도에서 정직한 제안자가 선택될 확률은 다음과 같다.
 
 $$
 P(\text{honest proposer})
-=
-1-\frac{b}{2f+1}
-=
-\frac{2f+1-b}{2f+1}
-\geq
-\frac{f+1}{2f+1}
+= \frac{2f+1-b}{2f+1}
+= 1-\frac{b}{2f+1}
 $$
 
-또한 각 시도의 제안자 선택이 독립적이라면, $k$회 시도 내에 적어도 한 번 정직한 제안자가 선택될 확률은 다음과 같다.
+또한 $b\leq f$이므로 다음 하한이 성립한다.
+
+$$
+P(\text{honest proposer})
+\geq \frac{f+1}{2f+1}
+$$
+
+각 시도의 제안자 선택이 서로 독립적이라면, $k$회 시도 내에 적어도 한 번 정직한 제안자가 선택될 확률은 다음과 같다.
 
 $$
 P(\text{at least one honest proposer})
-=
-1-\left(\frac{b}{2f+1}\right)^k
+= 1-\left(\frac{b}{2f+1}\right)^k
 $$
 
 **증명.** 전체 노드는 $2f+1$개이고, 실제 Byzantine 노드는 $b$개이다. 따라서 정직한 노드는 $2f+1-b$개이다.
@@ -224,34 +226,42 @@ $$
 
 $$
 P(\text{honest proposer})
-=
-\frac{2f+1-b}{2f+1}
-=
-1-\frac{b}{2f+1}
+= \frac{2f+1-b}{2f+1}
+$$
+
+이를 정리하면 다음과 같다.
+
+$$
+P(\text{honest proposer})
+= 1-\frac{b}{2f+1}
 $$
 
 또한 $b\leq f$이므로 다음 하한이 성립한다.
 
 $$
 P(\text{honest proposer})
-\geq
-\frac{f+1}{2f+1}
+\geq \frac{f+1}{2f+1}
 $$
 
-한편 단일 시도에서 Byzantine 제안자가 선택될 확률은 $\frac{b}{2f+1}$이다. 각 시도의 선택이 독립적이므로 $k$회 모두 Byzantine 제안자가 선택될 확률은 다음과 같다.
+한편, 단일 시도에서 Byzantine 제안자가 선택될 확률은 다음과 같다.
+
+$$
+P(\text{Byzantine proposer})
+= \frac{b}{2f+1}
+$$
+
+각 시도의 선택이 독립적이므로 $k$회 모두 Byzantine 제안자가 선택될 확률은 다음과 같다.
 
 $$
 P(\text{all Byzantine proposers})
-=
-\left(\frac{b}{2f+1}\right)^k
+= \left(\frac{b}{2f+1}\right)^k
 $$
 
-따라서 $k$회 시도 내에 적어도 한 번 정직한 제안자가 선택될 확률은 여사건을 이용하여 다음과 같이 구할 수 있다.
+따라서 여사건을 이용하면, $k$회 시도 내에 적어도 한 번 정직한 제안자가 선택될 확률은 다음과 같다.
 
 $$
 P(\text{at least one honest proposer})
-=
-1-\left(\frac{b}{2f+1}\right)^k
+= 1-\left(\frac{b}{2f+1}\right)^k
 $$
 
 $\square$
