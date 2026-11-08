@@ -1,470 +1,837 @@
-# Salix Consensus - Leaderless Byzantine Consensus with Majority Quorums and Constant Phases
+# Salix Consensus — Owner-Scoped Core
 
-[//]: # (Specification v3 (Excluding Order Preservation))
+## 1. Overview and Research Objectives
 
-## 1. Overview
+Salix is a Leaderless Byzantine Consensus protocol that uses synchronous communication and digital signatures to provide agreement among all honest nodes and state convergence for client-signed actions, in an environment containing fewer than one-third Byzantine nodes and Byzantine clients.
 
-Salix is a Byzantine Consensus Protocol that performs **per-request consensus** (agreement based on a Commit Certificate for a signed request) using synchronous communication and cryptographic digital signatures in an environment where fewer than half of all nodes are Byzantine and Byzantine clients exist.
+The system aims to satisfy the following conditions:
 
-The total number of nodes is defined as $n=2f+1$, tolerating at most $f$ Byzantine nodes.
+- Number of nodes: $n=2f+1$
+- Maximum number of Byzantine nodes: $f$
+- Commit quorum: $f+1$
+- Communication model: Synchronous communication
+- Authentication: Digital signatures
+- Consensus architecture: Leaderless
+- Consensus rounds: A constant number of rounds independent of $f$
+- Variable model: Every variable is assigned to a single Owner
 
-The protocol consists of three fixed phases and an always-on Commit procedure that is not bound to any phase.
+### 1.1. Research Objectives
+
+The primary objective of Salix is to construct Leaderless, constant-round consensus using synchronous communication and digital signatures in an $n=2f+1$ environment.
+
+The design aims to address the following problems:
+
+1. **Leader availability:** Eliminate dependence on a single leader and on availability structures that rely on View Change after leader failure.
+2. **Round-dependent communication overhead:** Reduce the round and communication costs incurred by BackOff-style protocols requiring $f+1$ rounds.
+3. **Centralised ordering dependency:** Avoid architectures in which a single centralised leader must determine the global order.
+
+An additional contribution of Salix is the abstraction of operations handled by consensus into variable definition and modification. The consensus target is not an arbitrary batch of transactions, but a versioned state transition (action) on a variable with an explicitly designated Owner.
+
+### 1.2. Abstraction of Consensus Targets
+
+Every action handled by consensus is reduced to an operation on a single variable.
+
+- **OP operations:** Handle variable definitions.
+    - `Declare`: Declare a variable.
+    - `Redefine`: Redefine variable metadata.
+    - `Retire`: Remove a variable definition.
+- **WR operations:** Handle variable values or reads.
+    - `Write`: Modify a variable value.
+    - `Read`: Reference a specific execution version of another variable.
+
+The core rules are as follows:
+
+1. An action modifies exactly one variable.
+2. Every variable is assigned to a single Owner.
+3. The version order of a variable is represented by its own independent version sequence.
+4. No default global order is imposed across different variables.
+5. Dependencies between variables are explicitly specified through Read dependencies.
+6. Shared state calculated from multiple variables is treated as derived state produced by a deterministic function, rather than as a variable that must be directly agreed upon.
+
+### 1.3. Owner-Scoped State and Derived Shared State
+
+Salix distinguishes between the existence of shared state and the claim that a shared variable must exist.
+
+A logical state $S$, which is jointly observed or used by multiple parties, can be represented as a deterministic function of independent variables owned by those parties.
 
 $$
-\boxed{
-\text{Propose}
-\rightarrow
-\text{Prepare}
-\rightarrow
-\text{Merge}
-}
-\quad+\quad
-\boxed{\text{Commit (Timing-independent, always-on propagation procedure)}}
+S=F(X_1,X_2,\ldots,X_m)
 $$
 
-The main characteristics of Salix are as follows:
+Here, $X_i$ is a variable or set of variables assigned to Owner $i$, and $F$ is a deterministic function defined by the implementation.
 
-- There is no leader (proposer).
-- In an $n=2f+1$ environment, a Commit Certificate (CC) is formed with signatures from $f+1$ nodes.
-- It separates request propagation (Prepare) from signature collection (Merge).
-- Commit is not a phase, but an always-on procedure independent of timing; any node that receives a valid CC unconditionally propagates it once.
-- If an honest node receives a request in time, all honest nodes will hold the CC at the end of Merge without cooperation from Byzantine nodes.
-- This version **does not guarantee ordering across requests** (Section 12).
-- It does not support separate Fail Recovery.
+For example, the balance of a joint account can be derived from the transaction histories independently owned by Alice and Bob.
+
+$$
+Balance=B_0+\sum T_A+\sum T_B
+$$
+
+Under this model, `Balance` does not necessarily need to be a separate shared variable. The consensus targets are modification actions on each Owner's transaction history, while the balance is calculated as a function of those states.
+
+This approach provides a way to represent shared state without requiring direct multi-writer permissions for that state. However, the ability to calculate derived state does not automatically guarantee atomic multi-variable updates, global invariants, or concurrency constraints. Such constraints must be addressed separately in the application design.
+
+### 1.4. Core and Blocks
+
+- **Core** guarantees which actions have been agreed upon, at which versions, for which owned variables. Its principal output is a self-verifying Commit Certificate (CC), which proves an action and its order through signatures from $f+1$ nodes.
+- **Blocks** provide additional functionality outside Core, including Failure Recovery, Checkpoint, Admission, Application, Result Query, Reaction, and Gateway.
+
+Core provides only a single Fast Path. Epoch consensus, the GLOBAL Owner, and the Slow Path do not exist.
+
+### 1.5. Core Principles
+
+- There is no leader. The Proposer acts as a bridge between clients and nodes and does not determine ordering or acceptance.
+- Every variable is assigned to a single Owner.
+- Only the variable's Owner may sign and submit actions for that variable.
+- Actions and Fast CCs are propagated once after verification.
+- Every CC proves both the action and its order.
+- Actions contain references to already executed versions, rather than the values themselves.
+- Execution is performed by a deterministic function that uses only the action and its pinned input values.
+- Shared state can be derived from the results of owned variables, and the derived state itself is not a consensus target of Core.
+
+---
 
 ## 2. System Model and Assumptions
 
-### 2.1. Node Configuration
+### 2.1. Nodes
 
-The total number of nodes is as follows:
+The number of nodes is $n=2f+1$.
 
-$$
-n=2f+1
-$$
+- There are at least $f+1$ honest nodes, which are non-faulty and follow the protocol.
+- There are at most $f$ Byzantine nodes.
+- Byzantine nodes may perform equivocation, remain silent, selectively remain silent, collude, and send arbitrary messages.
 
-- Honest nodes: at least $f+1$. Honest nodes are fault-free and follow the protocol.
-- Byzantine nodes: at most $f$.
+### 2.2. Clients and Owners
 
-Byzantine nodes may exhibit the following behaviors:
+Clients may be Byzantine. A Byzantine client may attempt to submit false actions, replay actions, submit actions concurrently, or sign different actions for the same `(V, ver)`.
 
-- Equivocation
-- Silent and Partial Silent behavior
-- Collusion
-- Crash
-- Transmission of arbitrary malformed messages
-
-### 2.2. Clients
-
-Clients may also be Byzantine.
-
-Byzantine clients may exhibit the following behaviors:
-
-- Impersonation attempts
-- Fraudulent requests
-- Replay attacks
-- Concurrent Requests
-- Generation of arbitrary request identifiers
-
-Client identity and request authentication are verified via cryptographic signatures.
-
-An honest client sends its request to **at least $f+1$ nodes** (to ensure at least one honest node is included).
+- A client can only use its own key and cannot impersonate another client.
+- A variable's Owner is the client identity that has permission to modify that variable.
+- An honest Owner signs only one action for the same `(V, ver)`.
+- A Byzantine Owner may sign conflicting actions for the same `(V, ver)`. In this case, progress on the corresponding variable may halt.
 
 ### 2.3. Cryptographic Assumptions
 
-1. Nodes and clients know each other's public keys and can verify signatures.
-2. Digital signatures cannot be forged.
-3. The hash function satisfies collision resistance.
-4. An honest node does not arbitrarily forge or tamper with signatures it generates.
-5. Signatures are domain-separated by including the message type and target (a request signature and a Commit signature cannot be substituted for one another).
+1. Nodes and clients know one another's public keys and can verify signatures.
+2. Signatures are unforgeable, and the hash function is collision-resistant.
+3. Signatures are domain-separated by message type and target. For example: `"ACT"` and `"COMMIT"`.
+4. Honest nodes do not forge their own signatures.
 
-### 2.4. Network and Timing
+### 2.4. Synchrony Model
 
-The network is synchronous.
+- $\Delta$: Upper bound on message delivery delay between honest nodes.
+- $\epsilon$: Upper bound on verification and scheduling processing time.
+- $\Delta'=\Delta+\epsilon$
+- $W$: Waiting period before a Fast vote, where $W\geq\Delta'$.
 
-- $\Delta$: Upper bound on message delivery delay between honest nodes
-- $B_k$: Upper bound on entry skew among honest nodes at the start of phase $k$
-- $\epsilon$: Upper bound on processing time required for signature verification and scheduling
+The Fast Path uses only local relative time. Clock skew $\delta$ and epoch start times, which were required for round alignment in the Slow Path, are no longer necessary.
 
-A message sent by an honest node is delivered to other honest nodes within $\Delta$.
+### 2.5. Proposer
 
-### 2.5. Fail Recovery and Indeterminate Outcomes
+The Proposer is the node to which a client sends an action.
 
-Salix does not support protocol-level Fail Recovery. Recovery and resumption from node failures occurring during consensus are handled by the implementation.
+1. It receives the action and forwards it to all nodes using `Propose`.
+2. If it holds the action's CC, it forwards the CC to the client.
 
-**"Failure" is not a finalized outcome, but an "indeterminate outcome."** The fact that a node has not received a CC by a certain point in time does not mean that a CC will not exist thereafter (a Byzantine node may withhold a CC and reveal it later).
+The Proposer cannot modify the action (because it is signed by the client) or forge a CC (because it requires node signatures). A Byzantine Proposer can only remain silent, selectively forward, delay, or withhold a CC. These behaviours affect liveness only, not safety.
 
-## 3. Request and Consensus Identification
+After a timeout, a client may retry the same action through another Proposer. Assuming that Proposers are selected uniformly and independently, the probability of reaching an honest Proposer within $k$ attempts is:
 
-### 3.1. Request Structure
+$$
+1-\left(\frac{b}{2f+1}\right)^k
+\geq
+1-\left(\frac{f}{2f+1}\right)^k
+$$
 
-When generating a consensus request, a client provides the following information:
+Here, $b\leq f$ is the actual number of Byzantine nodes.
+
+### 2.6. Failure Recovery
+
+Core does not provide Failure Recovery itself. Recovery is implemented as a block built on top of Core. The fact that a node has not received a CC up to a certain point does not indicate failure; it indicates an unresolved result.
+
+---
+
+## 3. Variable Model and Operations
+
+### 3.1. Variables and State
+
+A variable is identified as follows:
+
+$$
+V=(owner,name)
+$$
+
+`owner` is a client key or `clientId`. The `GLOBAL` Owner does not exist.
+
+The state is represented as follows:
 
 ```text
-Request {
-    requestId
-    clientRequest
-    clientSignature
+S : V ↦ (def = meta, val, ver)       // Undefined variables are absent from S
+lastVer[V]                          // Last consumed version; persists after Retire
+history[V, ver]                     // Execution history maintained by the implementation
+```
+
+- `ver` is the number of the version consumed by an action agreed upon for that variable.
+- Versions increase monotonically for each variable.
+- Versions continue across deletion and redeclaration.
+- `(V, ver)` is a unique position in the history of that variable.
+- `lastVer[V]` is retained as a tombstone even after deletion.
+
+All variables follow the same update-authorisation rule.
+
+| Owner | Update permission | Ordering |
+|---|---|---|
+| `clientId` | Only actions signed by that Owner | The version sequence of variable `V` |
+
+### 3.2. Operation Definitions
+
+| Type | Operation | Preconditions | Effect |
+|---|---|---|---|
+| OP | `Declare(V, meta, init)` | `V` is undefined | Define the variable and set its initial value |
+| OP | `Redefine(V, meta')` | `V` is defined | Replace metadata while preserving the value and Owner |
+| OP | `Retire(V)` | `V` is defined | Remove the definition while retaining `lastVer[V]` |
+| WR | `Write(V, f, args)` | `V` is defined | `val(V)=f(pinned reads,args)` |
+| WR | `Read(V', ver')` | The referenced version has already been executed | Use as an action input without changing state |
+
+The Core defines the semantics of OP operations, variable existence, ownership, versions, and preconditions.
+
+The value function `f` and business rules for WR writes are defined by the implementation. However, `apply` may only access the declared reads and the target variable. If this requirement is violated, the entire action is treated as a no-op.
+
+Ownership transfer is not included as a Core operation. If required, it can be represented at the implementation level using `Retire` by the previous Owner and `Declare` by the new Owner. This process may require separate coordination between the version sequences of different Owners.
+
+### 3.3. Action Format
+
+```text
+Action {
+    author            // Signer (clientId); must equal target.owner
+    target            // The single variable V affected
+    ver               // Version to consume in V
+    reads             // [(V', ver')] references to already executed versions
+    effect            // OP.Declare | OP.Redefine | OP.Retire | WR.Write(f, args)
+    authorSignature   // Sign(authorSK, "ACT" || author || target || ver || reads || effect)
 }
 
-clientSignature = Sign(clientSK, "REQ" ‖ requestId ‖ clientRequest)
+proposeId = H(author || target || ver || reads || effect)
 ```
 
-`proposeId` is not a value provided by the client, but a **derived value computed by nodes** (since `proposeId` takes `clientSignature` as input, the signature cannot include `proposeId`).
+Static validation checks the signature, hash, format, and `target.owner == author`.
 
-### 3.2. Propose ID
+Since an action has only one `target`, it modifies only one variable.
 
-`proposeId`, the identifier of a consensus instance, is defined as follows:
+### 3.4. Read Dependency Contract
+
+An action identifies the variables it reads by referencing `(V', ver')`. The values themselves are not included in the action.
+
+**Core restriction: Read may reference only versions whose execution has already completed.**
 
 $$
-proposeId =
-H(
-clientSignature
-\parallel
-clientRequest
-\parallel
-requestId
-)
+Executed(V',ver') \prec Accept(a)
 $$
 
-The possibility of different request contents having the same `proposeId` is ruled out by hash collision resistance. Therefore, different request contents cannot be bound to a single consensus instance ID.
-
-If the signature scheme is non-deterministic, the same logical request may have different `proposeId` values. In this case, they are treated as separate instances, and duplicates are eliminated in the State Machine (SM) based on the criteria in Section 3.3.
-
-### 3.3. Request ID
-
-`requestId` is an identifier that manages request uniqueness and idempotency.
-
-The main rules are as follows:
-
-- When retransmitting the same logical request, the same `requestId` is used.
-- Even if the request content is identical, a new `requestId` may be used if it represents a new operation.
-- If the request content differs, it is treated as a distinct request even if the same `requestId` is used.
-- `requestId` does not need to be sequential or globally unique.
-
-Examples:
-
-| Request    | Request ID | Handling                             |
-|------------|-----------:|--------------------------------------|
-| PUT x = 10 |          1 | New operation                        |
-| PUT x = 20 |          2 | New operation                        |
-| PUT x = 10 |          3 | Distinct new operation               |
-| PUT x = 10 |          1 | Retransmission of existing operation |
-
-Even if the same logical request is committed multiple times, it must be applied to the SM only once.
-
-Whether an application is a duplicate is determined based on the client's identity, `requestId`, and request content.
-
-## 4. Commit Certificate
-
-A Commit Certificate (CC) consists of the entire request for a specific consensus instance and the set of Commit signatures from nodes.
-
-```text
-CC {
-    request: { requestId, clientRequest, clientSignature }
-    sigs:    { (nodeId, commitSignature) }
-    order:   ⊥        // Reserved field. Currently unused (Section 12)
-}
-
-commitSignature = Sign(nodeSK, "COMMIT" ‖ proposeId ‖ H(request) ‖ order)
-```
-
-From a single CC, the `proposeId`, request, and signers can all be extracted.
-
-A valid CC must satisfy the following conditions:
-
-1. It includes at least $f+1$ signatures from distinct nodes.
-2. All signatures must be valid.
-3. All signatures must correspond to the same `proposeId` and the same request data (`H(request)`).
-4. `proposeId` matches the value recomputed from `request`.
-5. The client signature is valid and the request format is valid.
-6. It passes the implementation's **stateless** validity rules.
-
-$$
-|CC|\geq f+1
-$$
-
-Even if the sets of signatures themselves differ, any set of $f+1$ or more valid signatures targeting the same `proposeId` and the same request data is treated as a CC for the same consensus result.
-
-A CC generated in one consensus instance is valid only for that instance.
-
-## 5. Protocol
-
-### 5.1. Propose
-
-**Purpose: Initiation of consensus.**
-
-The client delivers the request it generated to the nodes.
-
-```text
-Propose(
-    requestId,
-    clientRequest,
-    clientSignature
-) -> ()
-```
-
-When a node receives a request during the Propose interval, it computes `proposeId` and verifies the client signature, format, and stateless rules. Only requests that pass verification are propagated in Prepare.
-
-Propose is the stage that signals the start of consensus; Commit signatures are not collected at this stage.
-
-### 5.2. Prepare
-
-**Purpose: Propagation of requests.**
-
-```text
-Prepare(
-    requestId,
-    clientRequest,
-    clientSignature
-) -> ()
-```
-
-A node propagates **requests that were directly received and passed verification during the Propose interval** to all other nodes.
-
-**Requests received via Prepare are not re-propagated.**
-
-The primary purpose of Prepare is to compensate for situations where a Byzantine node or client delivers a request to only a subset of nodes. Under the synchronous network assumption, if at least one honest node receives a request during the Propose interval and propagates it, all honest nodes will receive that request within the Prepare interval.
-
-Prepare is neither a voting stage nor a commit decision stage.
-
-### 5.3. Merge
-
-**Purpose: Request validity verification and Commit signature collection.**
-
-A node holding the request body requests signatures for that consensus instance from other nodes.
-
-```text
-MergeRequest(proposeId) -> (isValid, commitSignature)
-```
-
-A node receiving this request verifies the following:
-
-- Hash verification of `proposeId`
-- Client signature verification
-- Request format verification
-- The implementation's **stateless** validity rules
-
-**Stateful verification (such as account balance, whether the request has already been processed, etc.) is not performed in Merge.** This is because SM states may differ across nodes, causing honest nodes to produce different `isValid` results. Stateful verification is performed deterministically during the application stage (Section 7).
-
-A node that does not hold the request body responds with `isValid = 0` and does not provide a signature. If verification passes, it responds with `isValid = 1` along with a Commit signature. A node includes its own signature in its own collection.
-
-Once a node collects $f+1$ valid Commit signatures from distinct nodes, it constructs a CC and invokes `Commit(cc)` (Section 5.4).
-
-Additional implementation-specific rules must be **stateless rules** that produce identical results across all honest nodes for the same input.
-
-### 5.4. Commit
-
-**Purpose: Verification, propagation, and application of the CC. This is an always-on procedure, not a phase.**
-
-```text
-Commit(cc) -> ()
-```
-
-The input is a single CC, and all necessary information is extracted from the CC. A node that constructs a CC during Merge also invokes `Commit(cc)` on itself to follow the same execution path. There are no timing constraints, and CCs arriving after phase termination are also processed.
-
-```text
-on Commit(cc):
-    id = cc.proposeId
-    if broadcasted[id]: return              // Exit without verification for already-propagated instances
-    if !verify(cc): return                  // All validity conditions from Section 4
-    atomically:                             // Prevent concurrent reception race conditions
-        if broadcasted[id]: return
-        broadcasted[id] = true
-    broadcast(cc, everyone)                 // Propagation precedes SM execution
-    if !applied[id]:
-        applied[id] = true
-        result = apply(cc)                  // Section 7
-    reply(client, id, result)
-```
+Here, `Accept(a)` denotes the local acceptance point at which the action becomes eligible for Fast voting. The mere existence or commitment of a CC is insufficient. A CC proves the agreed order, but does not automatically mean that the corresponding state version has been applied.
 
 The rules are as follows:
 
-- `broadcasted[id]` is recorded **only after passing verification** (preventing a fake CC from preempting `proposeId`).
-- Duplicate detection is based on `proposeId` rather than raw CC bytes (preventing amplification where valid CCs with different signer combinations are repeatedly propagated).
-- Propagation is independent of SM application. Even if application is delayed or fails, propagation is still performed.
-- Deduplication when different `proposeId` values represent the same logical request is handled by the SM.
+1. Every Read reference in an action must identify a valid variable and version.
+2. The referenced version must already have been executed at the node.
+3. An action containing a reference that has not yet been executed may be propagated, but it cannot become eligible for voting until the referenced version has been executed.
+4. An honest client should submit an action only after confirming that the referenced version has been executed.
+5. References to already executed versions do not create backward dependencies in the execution waiting graph.
+6. To reference a historical version, its history must be retained.
 
-## 6. Phase Stability
+This restriction is intended to prevent circular waiting and dependency deadlocks between versions that have not yet been executed.
 
-In the current phase, once each node secures valid responses from $f+1$ distinct nodes (including itself), it starts a wait timer $s_k$.
+### 3.5. Deterministic Execution Contract
 
-When the timer expires, the node terminates the current phase and transitions to the next phase.
+The execution function has the following form:
 
-### 6.1. Phase Transition Voting
+$$
+apply(action,pinned)\rightarrow state\ change\ |\ no\text{-}op
+$$
 
-- Once a node completes its current phase operations, it includes itself in the phase transition vote count.
-- Only valid responses from distinct nodes are counted toward the vote.
-- Responses containing invalid signatures are not included in the vote count.
-- The timer starts after securing valid responses from $f+1$ nodes (including itself).
+- `pinned` contains the values of versions explicitly referenced by the action that have already been executed.
+- The function cannot read any state other than the action and `pinned`.
+- State-dependent validation (e.g. checking a balance) is performed deterministically inside `apply`.
+- A failed validation results in a no-op. Once the CAS succeeds, the version is consumed regardless of whether the operation succeeds.
 
-What counts as a "valid response" in the Propose and Prepare phases is an open item in Section 11.
+**Implementation determinism requirement:** All honest nodes must produce the same result from the same action, the same pinned inputs, and the same previous state.
 
-### 6.2. Timer Conditions
+The implementation must control the following:
 
-Depending on how future-phase messages are handled, the following conditions must be satisfied:
+- No asynchronous or node-specific Wall-clock dependencies.
+- No use of uncoordinated randomness.
+- Normalisation of serialisation and hash inputs.
+- Control of floating-point arithmetic differences and non-deterministic data-structure iteration.
+- External data access must be converted into agreed inputs.
+- Identical initial state and application rule versions.
+- Restriction or normalisation of operations whose results may differ across runtimes or platforms.
 
-| Phase                                     | Condition                    | Notes                                       |
-|-------------------------------------------|------------------------------|---------------------------------------------|
-| Prepare (buffering future-phase messages) | $s_k\ge\Delta+B_k$           | One-way propagation                         |
-| Prepare (retrying after `Try again`)      | $s_k\ge2\Delta+B_k+\epsilon$ | Includes round-trip                         |
-| Merge                                     | $s_k\ge2\Delta+B_k+\epsilon$ | Round-trip required due to request-response |
+Core does not enforce the specific implementation of business operations, but the implementation must satisfy the determinism contract above.
 
-### 6.3. Requests After Phase Termination
+### 3.6. Derived Shared State
 
-Messages arriving for a phase that has already terminated are rejected. This prevents delayed insertion attacks using messages from previous phases.
+Shared state derived from owned variables belonging to multiple Owners does not need to be declared as a Core variable.
 
-**Exception: CC (`Commit`) messages are processed regardless of phase.**
+$$
+S=F(X_1^{v_1},X_2^{v_2},\ldots,X_m^{v_m})
+$$
 
-### 6.4. Future-Phase Requests
+Here, $X_i^{v_i}$ is a specific execution version of a variable owned by Owner $i$.
 
-When receiving a request for a future phase that has not yet started, the node either returns the following response or buffers the message:
+Example: Joint account
 
 ```text
-Try again
+Alice.transactions = [+100, -30, +50]
+Bob.transactions   = [-20, +200, -10]
+
+Balance = initialBalance
+        + sum(Alice.transactions)
+        + sum(Bob.transactions)
 ```
 
-This response does not imply any consensus claim or vote. The sender treats the request as a retry target and applies backoff and a retry limit.
+`Balance` is calculated as a deterministic function of owned transaction histories rather than as an independent shared variable.
 
-## 7. Request Application and Client Response
+The meaning of this model is:
 
-When a node receives a valid CC for the first time, it executes `apply(cc)`.
+- Each Owner modifies only its own variables.
+- Shared state is composed from the results of multiple owned variables.
+- The consensus targets are individual variable state transitions.
+- Derived state itself requires neither separate consensus nor an Owner.
 
-- **Stateful verification** (balance, whether the request was already processed, business rules) is performed deterministically at this stage. A request that fails verification is treated as a **no-op that does not modify SM state**, and that result is returned to the client.
-- Even if multiple CCs are generated for the same logical request, it is applied to the SM only once (based on client identity, `requestId`, and request content).
+#### 3.6.1. Consistency of Derived State
 
-**Client Success Determination.** The client determines success not by the CC itself, but upon receiving the same `reply` from **$f+1$ distinct nodes**. Since at least one of those nodes is honest, success cannot be established solely from a CC kept hidden by Byzantine nodes.
+To calculate derived state identically, all honest nodes must use the same input versions.
 
-A client that fails to receive a result retries using the same `requestId`.
+For example, the following represents one explicit input snapshot:
 
-## 8. Byzantine Attack Scenarios
+$$
+Balance=F(Alice^{(5)},Bob^{(8)})
+$$
 
-### 8.1. Byzantine Clients
+If each node uses a different combination of versions, it may calculate a different result. Therefore, queries and calculations of derived state must specify an input version vector.
 
-#### Replay
+This model does not automatically guarantee:
 
-Retransmitting the same logical request with the same `requestId` allows identical request identification. Even if multiple CCs are generated, the SM applies the operation only once.
+- Atomic simultaneous modification of multiple variables.
+- Global invariants spanning multiple variables.
+- Global linearisability for concurrent operations.
+- Automatic freshness of derived state.
 
-#### Fraudulent Requests
+These requirements must be addressed through application business rules, partitioning strategies, reservation protocols, or separate coordination mechanisms.
 
-A client can sign a fraudulent request using its own private key. A signature guarantees client authentication and request integrity, not the semantic truth of the request content. Violations of business rules are handled as no-ops during the application stage (Section 7).
+### 3.7. Variable Declaration Rules
 
-#### Equivocation
+Declaration (`Declare`) is an ordinary action.
 
-Binding different request contents to the same `proposeId` is ruled out by hash collision resistance. Requests using different `proposeId` values are treated as separate consensus instances.
+1. Reads and writes to undefined variables result in a deterministic no-op.
+2. If the same `V` is declared multiple times, only the declaration executed first in version order is valid.
+3. A Read referencing a version preceding declaration is invalid.
+4. Declaration eligibility and naming rules are determined by the implementation's deterministic policy.
+5. If a variable is redeclared under the same name after deletion, it continues from the version following the existing `lastVer[V]`.
 
-#### Concurrent Requests
+---
 
-Simultaneous submissions of the same request are treated as the same logical operation. Identical request contents using different `requestId` values are distinct operations. Different request contents form separate consensus instances, and **ordering across instances is not guaranteed in this version** (Section 12).
+## 4. Identification and Commit Certificate
 
-#### Spam
+### 4.1. Lanes and Conflicts
 
-If a Byzantine client generates a large volume of validly signed requests, all honest nodes will sign and propagate them. Rate limiting and quotas are policies outside the consensus layer.
+- A **lane** is a variable `V`.
+- No default ordering exists between different variables.
+- Precedence relationships between variables are explicitly specified through Read dependencies.
+- A conflict occurs when different `proposeId` values exist for the same `(V, ver)`.
+- The idempotency key is `(V, ver)`.
 
-### 8.2. Byzantine Nodes
+Version sequence rules:
 
-#### Silent Behavior
+- `(V, ver)` may be executed only after `(V, ver-1)` has been executed.
+- As a default rule, an honest Owner submits the next version only after confirming the agreement and execution of the previous version.
+- Pipelining is permitted only if the implementation satisfies additional safety conditions. Under the default specification, execution of the next version is not permitted before the previous version has been executed.
 
-**Complete Silence in Propose.** If the client fails to deliver the request to any honest node, it falls outside the guarantee scope. An honest client avoids this by transmitting to at least $f+1$ nodes.
+### 4.2. Commit Certificate
 
-**Partial Silence in Propose.** If at least one honest node receives the request during the Propose interval, it is propagated to all honest nodes during Prepare.
+```text
+CC {
+    action
+    order      // (V, ver)
+    proof      // { (nodeId, sig) }
+               // sig = Sign("COMMIT" || proposeId || order)
+}
+```
 
-**Silence and Partial Silence in Prepare.** Because honest nodes propagate the request, Byzantine silence alone cannot block request delivery among honest nodes.
+Fast CC validity conditions:
 
-**Silence and Partial Silence in Merge.** Even if up to $f$ nodes remain silent, there are at least $f+1$ honest nodes; if all honest nodes holding the request sign it, $f+1$ signatures are secured without Byzantine cooperation.
+1. At least $f+1$ valid signatures from distinct nodes.
+2. All signatures refer to the same `proposeId` and `order`.
+3. `order == (action.target, action.ver)`.
+4. `action.target.owner == action.author`.
+5. The action's signature and static format validation are valid.
 
-**Silence and Partial Silence in Commit.** Because an honest node immediately broadcasts any valid CC it receives to everyone, selective silence by Byzantine nodes cannot block the propagation of a valid CC.
+A CC can independently verify the action, order, and signers, regardless of who provides it.
 
-#### Partial CC via Collusion with a Subset of Honest Nodes
+A CC proves that the action has been agreed upon at the corresponding variable version position. Queries for execution results are handled by the Result Query block.
 
-A Byzantine node can send a request to only a subset of honest nodes during the Prepare stage (since items received in Prepare are not re-propagated) and combine signatures from those honest nodes with Byzantine signatures to form a valid CC. Because this CC is a valid CC for a valid request, the protocol does not prevent its creation, but **renders it harmless**:
+---
 
-- If a Byzantine node gives the CC to at least one honest node, that node broadcasts it immediately, so all honest nodes obtain the same CC within $\Delta$ (Theorem T3).
-- If it is not given to any honest node, honest nodes do not commit it, and since the client does not receive responses from $f+1$ nodes, the client does not determine it as successful (Section 7).
+## 5. Consensus
 
-#### Equivocation
+### 5.1. Messages and Propagation
 
-**Propose / Prepare Equivocation.** Attempts to bind different request contents to the same `proposeId` are rejected during hash verification.
+Message types:
 
-**Merge Equivocation.** Even if a Byzantine node delivers conflicting responses, honest nodes only accept responses containing valid signatures, and a Byzantine node's signature cannot substitute for an honest node's signature.
+- `Propose`: Forwarded from the Proposer to nodes.
+- `Prepare`: Relays an action between nodes.
+- `Vote`: A node's Commit signature.
+- `CC`: Commit Certificate.
 
-**Commit Equivocation.** A CC requires $f+1$ valid signatures targeting the same `proposeId` and request data. Since there are at most $f$ Byzantine nodes, they cannot forge a valid CC without at least one honest node's signature.
+Messages are not rejected based on the time interval in which they are received.
 
-## 9. Target Properties
+```text
+on receive(x):                       // Action or Fast CC
+    id = proposeId(x)
+    if forwarded[id, kind(x)]: return
+    if !verifyStatic(x): return
+    atomically:
+        if forwarded[id, kind(x)]: return
+        forwarded[id, kind(x)] = true
+    broadcast(x, everyone)
+    handle(x)
+```
 
-**Validity.** A valid CC exists only for a request that has passed client signature, format, and stateless rules verification. Byzantine nodes alone cannot create a CC for any request.
+- `forwarded` is recorded only after state-independent validation succeeds.
+- The propagation gate does not impose state-dependent conditions such as the current version or execution status.
+- A valid action is propagated even if its Read dependencies have not yet been executed.
+- Voting eligibility is checked separately.
 
-**Uniqueness.** Only a single request corresponds to a single `proposeId`.
+### 5.2. Voting Rules
 
-**Totality.** If any honest node propagates a valid CC, all honest nodes propagate the same CC within $\Delta+\epsilon$.
+Let $t_r$ be the local time at which action $r$ is first observed, and let the waiting period be $W\geq\Delta'$.
 
-**Liveness.** If at least one honest node receives a valid request during its Propose interval, all honest nodes hold a CC by the end of Merge.
+The voting time must satisfy both of the following conditions:
 
-**Client Soundness.** If a client determines a request as successful (receiving identical responses from $f+1$ distinct nodes), all honest nodes will hold the same CC.
+1. At least $W$ has elapsed since the first observation.
+2. All Read dependencies have already been executed at that node.
 
-**Idempotent Application.** Even if duplicate CCs are generated for the same logical request, the request is applied to the SM only once.
+```text
+on first sight of action r:
+    t_r = local_time()
+    schedule vote eligibility check at t_r + W
 
-## 10. Theorems and Proofs
+on vote eligibility check(r):
+    key = (r.target, r.ver)
 
-**T1 (Validity).** The request in a valid CC passes client signature, format, and stateless rules verification, and Byzantine nodes cannot construct a CC on their own.
+    if |seen[key]| > 1:
+        return
 
-- *Proof.* Conditions 5 and 6 of Section 4 are enforced by `verify`. A CC contains signatures from at least $f+1$ distinct nodes, and since there are at most $f$ Byzantine nodes, it contains at least one honest signature. An honest node signs only requests that pass verification. $\square$
+    if voted[key]:
+        return
 
-**T2 (Uniqueness).** Only a single request corresponds to a single `proposeId`.
+    if any read dependency is not executed:
+        wait until all read dependencies are executed
+        re-check conflict and voted conditions
+        return
 
-- *Proof.* `proposeId` is the hash of the request content and client signature; by collision resistance, different contents cannot produce the same value. $\square$
+    voted[key] = true
+    order = key
+    broadcast(
+        Vote(
+            r.proposeId,
+            order,
+            Sign("COMMIT" || r.proposeId || order)
+        ),
+        everyone
+    )
+```
 
-**T3 (Totality).** If an honest node $i$ performs `broadcast` at time $t$, all honest nodes perform `broadcast` within $t+\Delta+\epsilon$.
+`seen[key]` records the distinct actions for that key that have passed state-independent validation. Conflict detection is performed again while waiting for Read dependencies to be executed.
 
-- *Proof.* The CC propagated by $i$ is valid. Each honest node $j$ receives it within $\Delta$. If $j$ has already propagated it, it has already done so; otherwise, it verifies the CC ($\le\epsilon$) and propagates it. Because the procedure in Section 5.4 is phase-independent, phase-boundary attacks do not exist. $\square$
+### 5.3. CC Construction and Commit
 
-**T4 (Liveness).** If an honest node $h$ receives a valid request $R$ during its Propose interval, all honest nodes hold a CC for $R$ when Merge ends.
+```text
+on receive Vote:
+    verify signature and order
+    votes[proposeId, order] += distinct signer
 
-- *Proof.* $h$ propagates $R$ at the start of its Prepare phase, $a_h$. The Prepare entry time $a_j$ of any honest node $j$ satisfies $|a_j-a_h|\le B_k$, and the propagation arrives by $a_h+\Delta\le a_j+B_k+\Delta\le a_j+s_k$, which falls within $j$'s Prepare interval (by the condition in Section 6.2). Thus, at the start of Merge, all honest nodes hold $R$. Since the stateless verification result for $R$ is identical across all honest nodes, all honest nodes sign it. Each honest node $i$ sends a Merge request and receives responses from all honest nodes within $2\Delta+B_k$ (Section 6.2), collecting at least $f+1$ signatures (including its own) from honest nodes alone to construct a CC. Cooperation from Byzantine nodes is not required. $\square$
+    if at least f+1 distinct valid signatures
+       and action is known:
+        cc = construct CC
+        Commit(cc)
 
-**T5 (Client Soundness).** If a client receives the same `reply` from $f+1$ distinct nodes, all honest nodes propagate the same CC within $\Delta+\epsilon$.
+on Commit(cc):
+    held[cc.proposeId] = cc
+    scheduleExecution(cc)
+```
 
-- *Proof.* Among the $f+1$ responders, at least one is honest, and an honest node sends `reply` only after executing `broadcast`. The claim follows from T3. $\square$
+Receiving a CC does not trigger immediate execution. Execution is scheduled once the variable version order and Read dependency execution conditions are satisfied.
 
-Because T1 and T2 do not rely on synchrony, they **hold even in asynchronous settings**. Only T3, T4, and T5 rely on the synchrony assumptions ($\Delta$, $B_k$).
+### 5.4. Client Response
 
-## 11. Limitations and Open Items
+The reply is a CC.
 
-**Limitations**
+The Proposer forwards the CC to the client once it holds the action's CC. The client independently verifies the CC to confirm that the action was committed at the specified order.
 
-- **No Ordering.** Because the exact times at which honest nodes receive a CC may differ within $\Delta$, the application order of non-commutative operations is not guaranteed. The guarantee of this version extends only to "for each request, all honest nodes hold the same CC."
-- **State Retention.** `broadcasted` and `applied` cannot be retained indefinitely. Cleanup criteria (such as checkpointing) and rules for handling late-arriving CCs after cleanup are needed.
-- **Bandwidth.** Because a CC embeds the entire request, it incurs a transmission cost of $(\text{request size}) \times O(n^2)$.
-- **Synchrony Assumption Violations.** If $\Delta$ or $B_k$ is violated, the time bounds of T3, T4, and T5 are not guaranteed. T1 and T2 remain intact.
+If the Proposer receives an action for which it already holds a CC, it may return the CC without initiating a new consensus process.
 
-**Open Items**
+Queries for execution results are outside the scope of CC and are handled by the Result Query block.
 
-1. Definition of a "valid response" in the Propose and Prepare phases (Section 6.1).
-2. Proof of how the protocol guarantees the entry skew bound $B_k$ (currently an assumption).
-3. Specification placement for rate-limiting policies.
+---
 
-## 12. Order Preservation Extension (Future Work)
+## 6. Execution
 
-The protocol is planned to be extended by including the CC's `order` field in the signed payload. However, this field alone does not guarantee ordering. Valid CCs for different requests could still be formed for the same position (since $Q=f+1$ does not guarantee an honest node intersection across quorums), and deciding who assigns the position is itself a consensus problem; therefore, extending the protocol requires rules to close this contention.
+### 6.1. Execution Conditions
+
+The execution conditions for `(V, ver)` are:
+
+1. `(V, ver-1)` has been executed. This condition is omitted for the first version of the variable.
+2. All Read dependencies `(V', ver')` have been executed.
+3. The values of referenced historical versions are available in the history.
+4. A valid CC for the action exists.
+
+Once these conditions are satisfied, `apply(action, pinned)` is executed.
+
+### 6.2. Per-Variable Execution
+
+```text
+on execution candidate cc:
+    V = cc.action.target
+    ver = cc.action.ver
+
+    if ver <= lastVer[V]:
+        skip as duplicate or stale action
+
+    if ver > lastVer[V] + 1:
+        buffer cc within deterministic window
+        return
+
+    if any read dependency is not executed:
+        buffer cc
+        return
+
+    pinned = load exact referenced versions
+    apply(cc.action, pinned)
+    advance lastVer[V] according to CAS rule
+    process next buffered version of V
+```
+
+Under the default rules, an honest Owner does not create version gaps. If a Byzantine Owner skips versions or submits conflicting actions, progress on that variable may halt.
+
+### 6.3. Meaning of `apply`
+
+```text
+apply(action, pinned):
+    require action.target == one declared variable
+    require all reads are explicitly declared and pinned
+
+    if CAS does not match:
+        no-op
+
+    consume the version when CAS matches
+
+    check deterministic OP/WR preconditions:
+        if failed:
+            preserve state
+            keep consumed version
+        else:
+            apply the single-variable effect
+```
+
+All honest nodes must use the same execution order and the same pinned inputs. Applications that violate the implementation determinism contract are outside Salix's state convergence guarantees.
+
+---
+
+## 7. Byzantine Attack Scenarios
+
+### 7.1. Byzantine Clients and Owners
+
+| Attack | Result |
+|---|---|
+| Impersonating another client | Rejected by signature verification |
+| Modifying another Owner's variable | Rejected by the `target.owner == author` check |
+| Action replay | Treated as an already consumed version and ignored |
+| Signing different actions for the same `(V, ver)` | Honest nodes do not vote, halting only the affected variable lane |
+| Modifying multiple variables with one action | Prevented by the single-`target` format |
+| Creating a version gap | Execution of subsequent versions of that variable is delayed or discarded |
+| Referencing an unexecuted version | Voting eligibility is suspended |
+| Using an undefined variable | Deterministic no-op |
+| Duplicate declaration | Only the first valid declaration in version order is applied |
+| Mass variable creation | Restricted by the Admission and Declaration Policy blocks |
+| False business semantics (e.g. exceeding a balance) | Results in a no-op through the implementation's deterministic `apply` validation |
+
+### 7.2. Byzantine Nodes and Proposers
+
+| Attack | Result |
+|---|---|
+| Forwarding an action only to selected honest nodes | Once one honest node receives it, propagation forwards it to all honest nodes |
+| Injecting conflicting actions at different times | Waiting with $W\geq\Delta'$ and propagation prevent honest nodes from voting for both |
+| Partial CC collusion with selected nodes | Once one honest node receives the CC, CC propagation distributes it to all |
+| Proposer silence or CC withholding | Client retries; safety is unaffected |
+| Forged CC | Verification fails without $f+1$ valid signatures |
+| Inducing signatures for different orders | Prevented by honest nodes' voting rules and conflict checks |
+
+---
+
+## 8. Guaranteed Properties
+
+- **Validity:** The action in a valid CC has passed Owner signature verification and state-independent validation. Byzantine nodes alone cannot create a CC.
+- **Uniqueness:** A single `proposeId` corresponds to only one action.
+- **Totality:** A valid action or Fast CC observed by an honest node is observed by all honest nodes within $\Delta'$.
+- **Fast Order Uniqueness:** Different actions for the same `(V, ver)` cannot both receive honest votes.
+- **Order Authenticity:** A valid CC proves one action and one variable version order, and no different action can have a CC for the same order.
+- **Single-Variable Effect:** An action affects only one variable definition or value.
+- **OP Determinism:** The variable definition table is identical across all honest nodes.
+- **Read Safety:** Actions reference only already executed versions and do not create cycles in execution dependencies.
+- **Deterministic Execution:** The same action, previous state, and pinned inputs produce the same result at every honest node.
+- **Convergence:** All honest nodes converge to the same version sequence and state for each variable.
+- **Liveness:** A valid action from an honest Owner is delivered with a CC to all honest nodes, provided that conflict and execution dependency conditions are satisfied.
+- **Proposer Safety:** Byzantine behaviour by a Proposer does not enable CC forgery or action modification.
+- **Derived-State Agreement:** Given the same input version vector and the same deterministic function, all honest nodes calculate the same derived shared state.
+
+---
+
+## 9. Theorems and Proof Obligations
+
+The following theorems are specification-level objectives. The final paper requires rigorous proofs for each assumption and state transition rule.
+
+### T1. Validity
+
+An action in a valid CC has passed valid Owner signature verification and format validation, and Byzantine nodes alone cannot create a CC.
+
+**Proof sketch.** A CC requires at least $f+1$ signatures from distinct nodes. Since there are at most $f$ Byzantine nodes, at least one honest signature is required. Honest nodes sign only actions that pass validation.
+
+### T2. Uniqueness
+
+By collision resistance, a single `proposeId` corresponds to only one action.
+
+### T3. Totality / Propagation
+
+Let $t$ be the time at which the first honest node receives a valid action or Fast CC. All honest nodes receive it by $t+\Delta'$.
+
+**Proof sketch.** The first honest node to receive the message forwards it to everyone after validation. Propagation is not blocked by state-dependent conditions.
+
+### T4. Fast Order Uniqueness
+
+Two different actions for the same `(V, ver)` cannot both receive honest votes, provided that $W\geq\Delta'$.
+
+**Proof sketch.** Let the first honest observation times of two conflicting actions be $a$ and $b$, respectively. By T3, each action is propagated to all honest nodes within $\Delta'$ of its first observation. An honest node must wait at least $W$ after its first observation before voting. Assuming that both actions receive honest votes leads to the same time inequalities used in the existing Fast uniqueness argument, from which $W<\Delta'$ is derived, yielding a contradiction. Delays caused by Read dependencies can only postpone voting, and conflict detection prevents voting once a conflict has been observed.
+
+### T5. Read Safety
+
+An action referencing an unexecuted version is not voted on, and a dependency graph in which Read references point only to completed executions cannot contain an execution-waiting cycle.
+
+**Proof obligation.** All honest nodes must consistently apply the rule that completion of the referenced version's execution precedes the action's voting eligibility. Since Read references point to already completed execution events, no backward dependency that waits for a later action's execution is formed.
+
+### T6. Fast Liveness
+
+For an action submitted by an honest Owner, if all Read dependencies have already been executed at every honest node before the action first reaches any honest node, and there is no conflict for the same `(V, ver)`, then all honest nodes hold a CC within $a+2\Delta'+W$, where $a$ is the time at which one honest node first receives the action.
+
+**Proof sketch.** All honest nodes receive the action within $\Delta'$ of $a$, then vote within a further $W$. Votes are propagated within $\Delta'$. Since there are at least $f+1$ honest nodes, a CC can be constructed without Byzantine cooperation. The condition that all Read dependencies have already been executed at every honest node is essential. The above time bound does not apply to actions that do not satisfy this condition.
+
+### T7. Convergence
+
+All honest nodes converge to the same state for each variable.
+
+**Proof obligations.**
+
+1. Propagation of valid actions (T3).
+2. Uniqueness of actions at the same order (T4).
+3. Identical execution order for each version.
+4. Completed execution of Read dependencies and references to identical versions (T5).
+5. The implementation determinism contract.
+6. Identical initial states.
+
+If these conditions are satisfied, each variable's version sequence produces the same deterministic state transitions at all honest nodes.
+
+### T8. CC Soundness — Honest Owner
+
+For an action signed by an honest Owner, if a valid CC exists, the action is executed at the specified order by all honest nodes, provided that the Read dependencies and previous-version execution conditions are satisfied.
+
+### T9. Order Authenticity
+
+Two different actions cannot have valid CCs for the same `(V, ver)` order.
+
+**Proof sketch.** Each CC contains at least one honest signer (among its $f+1$ signatures, at most $f$ can be Byzantine). Assuming that two CCs prove different actions, each action must have received at least one honest vote for that order. This contradicts Fast Order Uniqueness in T4. Quorum intersection alone is insufficient, since with $n=2f+1$ and quorum $f+1$, the intersection of two quorums may consist entirely of Byzantine nodes.
+
+### T10. OP Determinism
+
+The variable definition tables of all honest nodes are identical.
+
+**Proof sketch.** OP operations are ordinary actions and are executed in a single order per variable. Since their preconditions and effects are deterministically defined by Core, the same initial state and the same action sequence produce the same definition table.
+
+### T11. Derived-State Agreement
+
+If all honest nodes use the same input variable version vector and execute the same deterministic function $F$, the derived shared state is identical.
+
+$$
+X_i^{v_i}=X_{i,\ honest}^{v_i}
+\quad\forall i
+\implies
+F(X_1^{v_1},\ldots,X_m^{v_m})
+\text{ is identical}
+$$
+
+This theorem assumes a deterministic derived function and matching input versions. It does not provide a global snapshot automatically.
+
+---
+
+## 10. Core and Blocks
+
+### 10.1. Core Contract
+
+| # | Contract | Basis |
+|---|---|---|
+| C1 | Self-verifying CC: $f+1$ signatures prove the action and order | T1, T9 |
+| C2 | Propagation: Actions and Fast CCs observed by an honest node are observed by all honest nodes within $\Delta'$ | T3 |
+| C3 | Ordering: One version sequence per variable, with no default global order across variables | T4, T9 |
+| C4 | Deterministic execution: `apply(action,pinned)` complies with the implementation determinism contract | T7 |
+| C5 | Progress: Conflict-free actions from an honest Owner with executed Read dependencies obtain a CC within constant time | T6 |
+| C6 | Progress cursor: `cursor = {V → lastVer[V]}` | Section 6 |
+| C7 | OP uniqueness: Variable definitions and Owners can be reconstructed from CCs | T10 |
+| C8 | Single-variable action: An action modifies only one variable | Section 3.3 |
+
+### 10.2. Block Interfaces
+
+```text
+Admission.onAction(act)             -> accept | delay
+Persistence.onCC(cc), .onExecuted(order)
+Application.apply(act, pinned)      -> delta | no-op
+Recovery.fetch(cursor, peer)         -> [CC]
+Checkpoint.propose(cursor, digest), .onStable(cp)
+ResultQuery.get(V, ver)              -> value
+DerivedQuery.get(F, versionVector)   -> derived value
+Reaction.watch(V_src, rule)          -> submit subsequent action
+Gateway.submit(act), .retry()         -> CC
+Audit.record(cc, execution)
+```
+
+### 10.3. Block Constraints
+
+| # | Constraint |
+|---|---|
+| B1 | Blocks must not block or delay the propagation of validated actions and Fast CCs. |
+| B2 | Any policy that rejects a vote must be a deterministic rule applied identically by all honest nodes. Node-specific local rate limits may only be implemented through delay queues. |
+| B3 | Blocks must not change a CC's order or invoke `apply` outside Core's ordering rules. |
+| B4 | State data obtained from peers or storage must pass CC and execution history verification. |
+| B5 | Any block that affects state must be deterministic. |
+| B6 | Reaction must submit subsequent actions as ordinary actions and must not bypass Owner signatures or the single-variable rule. |
+| B7 | Derived-state calculations must specify an input version vector and must not treat results from different version vectors as the same snapshot. |
+
+### 10.4. Block Catalogue
+
+| Block | Role | Required Core Guarantees |
+|---|---|---|
+| Failure Recovery | Compare cursors and peer states, retrieve missing CCs, verify, and re-execute them | C1, C3, C6, C7 |
+| Checkpoint & GC | Checkpoint cursors, definition tables, tombstones, and state digests; clean up historical data | C1, C4, C6, C7 |
+| Application | Implement business rules and deterministic `apply` | C4 |
+| Admission / Rate Limit | Identity-based rate limiting and registration policy | C2, C5 |
+| Declaration Policy | Variable naming, declaration eligibility, quotas, and fees | C4, C7 |
+| Identity / Key Rotation | Key replacement and Owner identity policy | C3, C4 |
+| Result Query | Query the value of an executed variable version | C1, C4 |
+| Derived Query | Calculate derived state using an explicitly specified version vector | C4, B7 |
+| Reaction | Observe the execution of a source variable and submit subsequent actions | C1, C3, C8, B6 |
+| Gateway | Proposer selection, timeouts, and retries | T7 |
+| Audit | Retain CCs and execution history | C1 |
+
+### 10.5. Composition Rules
+
+- Each block must specify the Core guarantees it requires, the interfaces it provides, and the constraints with which it must comply.
+- Dependencies between blocks must be established only through Core contracts.
+- Removing or replacing a block must not affect Core safety. However, it may affect liveness, availability, and the freshness of derived state.
+- The retention period for CCs and history required for Recovery is determined by the Checkpoint block.
+
+---
+
+## 11. Limitations and Open Questions
+
+### 11.1. Limitations
+
+- Fast Path uniqueness depends on the synchrony assumption $W\geq\Delta'$.
+- There is no default global ordering between variables. Snapshots that read the state of different variables cannot be guaranteed to be identical without an explicit version vector.
+- Derived shared state is identical only when the same input version vector and deterministic function are used.
+- Core does not guarantee automatic freshness of derived state.
+- If an Owner equivocates for the same `(V, ver)` or creates a version gap, the corresponding variable lane may halt permanently.
+- If an Owner goes offline, submission of new actions for that variable stops. A Leaderless architecture does not eliminate the availability dependency on the Owner itself.
+- A model with explicitly assigned variable ownership does not automatically provide atomicity or global invariants for multi-party operations.
+- Deterministic `apply` depends on the implementation complying with the contract. Implementation non-determinism may break state convergence.
+- Atomic updates spanning multiple variables are not a default Core feature.
+- Dynamic targets, meaning target variables calculated during execution, are not supported.
+
+### 11.2. Open Questions
+
+1. The size of the per-variable pending window $w$ and the discard rules for version gaps.
+2. History retention periods and tombstone retention policies.
+3. Checkpoint specification: interval, state digest, and deterministic handling of CCs arriving after cleanup.
+4. Retention and proof policies when Read references access old history.
+5. Formal specifications and compatibility verification for block interfaces.
+6. Deterministic rules in Admission and Declaration Policy to prevent spam and mass variable creation.
+7. Ownership transfer procedures in cases of Owner failure or key loss.
+8. Construction and query consistency of version vectors for derived shared state.
+9. Design patterns for applications requiring atomic invariants across multiple variables.
+10. Comparison with prior work and communication complexity analysis.
+
+---
+
+## 12. Safety Verification and TLA+ Plan
+
+Subsequent verification will combine mathematical proofs with model checking. TLA+ model checking is a means of exploring state transitions and invariant violations within a finite state space; it does not replace mathematical proofs for general infinite executions or all implementations.
+
+### 12.1. Safety Invariants to Verify First
+
+- **TypeOK:** All state variables and messages satisfy their defined types.
+- **AtMostOneActionPerOrder:** Honest nodes do not commit conflicting actions for the same `(V, ver)`.
+- **ValidCommitCertificate:** A CC contains $f+1$ valid signatures from distinct nodes.
+- **OwnerAuthorization:** The action author matches the Owner of the target variable.
+- **MonotonicVersion:** `lastVer[V]` never decreases.
+- **SingleVariableMutation:** A single action modifies only one variable.
+- **ReadExecutedBeforeVote:** An action is not voted on before all Read dependencies have been executed.
+- **ReadVersionStable:** References to executed versions use the fixed value of that version.
+- **DeterministicApply:** The same state, action, and pinned input produce the same result.
+- **StateConvergence:** All honest nodes have the same state for the same variable execution history.
+- **DerivedStateAgreement:** Derived state calculated using the same version vector and function is identical.
+
+### 12.2. Liveness Properties to Verify
+
+- A conflict-free valid action from an honest Owner obtains a CC after all Read dependencies have been executed.
+- Valid actions and Fast CCs are propagated to all honest nodes.
+- A conflict in one variable does not prevent progress in other variables.
+- Buffered actions become executable once their preceding versions and Read dependencies have been executed.
+
+### 12.3. Attacks to Model
+
+1. Owner equivocation for the same `(V, ver)`.
+2. Selective propagation and silence by Byzantine nodes.
+3. Conflicting actions arriving at different times.
+4. Invalid Read versions and references to unexecuted Reads.
+5. Version gaps and duplicate actions.
+6. Late CCs after restart and Checkpoint.
+7. Submission interruption by a Byzantine Owner.
+8. Use of different version vectors when calculating derived state across multiple variables.
+
+---
 
 ## 13. Protocol Summary
 
+| Component | Role |
+|---|---|
+| Node model | $n=2f+1$, at most $f$ Byzantine nodes |
+| Owner | Sole authority permitted to modify each variable |
+| Action | OP or WR operation on a single owned variable |
+| Order | Per-variable version position `(V, ver)` |
+| Propagation | Forward each valid action and Fast CC to everyone once upon receipt |
+| Fast voting | At least $W\geq\Delta'$ after first observation, provided there is no conflict and Read dependencies have been executed |
+| CC | Self-verifying commit proof `{action, order, proof}` |
+| Execution | Deterministically applied after the previous version and all Read dependencies have been executed |
+| Shared state | Deterministic function of multiple owned variables and an explicit version vector |
+| Consensus path | Single Fast Path |
+| Blocks | Recovery, Checkpoint, Application, Admission, Declaration Policy, Identity, Result Query, Derived Query, Reaction, Gateway, Audit |
+
+## 14. Core Definition
+
+Salix provides Leaderless Byzantine Consensus for versioned state transitions of owned variables. Shared state can be represented as a deterministic function of multiple owned variables, and Core does not require shared state itself to be a separate consensus target.
+
 $$
 \boxed{
-\text{Propose}
-\rightarrow
-\text{Prepare}
-\rightarrow
-\text{Merge}
+\text{Consensus on owned state transitions}
+\quad\Longrightarrow\quad
+\text{Deterministically derived shared state}
 }
-\;+\;
-\text{Commit (Always-on)}
 $$
 
-| Stage              | Core Role                                                                |
-|--------------------|--------------------------------------------------------------------------|
-| Propose            | Client request submission                                                |
-| Prepare            | Propagation of requests received in Propose (no re-propagation)          |
-| Merge              | Stateless verification, Commit signature collection, and CC construction |
-| Commit (Always-on) | CC verification, single propagation, SM application, and client response |
-
-**Core Design Principle:** Separate request propagation from signature collection, form a CC with $f+1$ valid node signatures, and propagate any received valid CC once regardless of timing to ensure agreement across honest nodes.
+This proposition applies within the scope in which identical input versions, deterministic functions, and application invariants are satisfied.
