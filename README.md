@@ -132,15 +132,11 @@ This section specifies the assumptions required to prove the Liveness and Safety
 
 - **Liveness**
 
-  $$
-  \forall i \in H, \forall r \in R_{valid} : Propose(r) \Rightarrow \Diamond Decided_i(r)
-  $$
+  $\forall i \in H, \forall r \in R_{valid} : Propose(r) \Rightarrow \Diamond Decided_i(r) $
 
 - **Safety**
 
-  $$
-  \forall i, j \in H, \forall r \in R_{valid} : Decision_i(r) = Decision_j(r)
-  $$
+  $\forall i, j \in H, \forall r \in R_{valid} : Decision_i(r) = Decision_j(r)$
 
 ### Lemma A. Property of Type 2 Broadcast
 > $\forall i, j \in HonestNodes, \forall k \in AllNodes, \forall r \in Request : T2Broadcast_k(r) \land Observed_i(r) \Rightarrow Observed_j(r)$

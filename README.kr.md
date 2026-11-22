@@ -133,15 +133,11 @@ Sequence는 기본적으로, 대소 비교를 하나, 프로토콜 상에서는 
 
 - Liveness
 
-    $$
-    \forall i \in H, \forall r \in R_{valid} : Propose(r) \Rightarrow \Diamond Decided_i(r)
-    $$
+    $\forall i \in H, \forall r \in R_{valid} : Propose(r) \Rightarrow \Diamond Decided_i(r)$
 
 - Safety
 
-    $$
-    \forall i, j \in H, \forall r \in R_{valid} : Decision_i(r) = Decision_j(r)
-    $$
+    $\forall i, j \in H, \forall r \in R_{valid} : Decision_i(r) = Decision_j(r)$
 
 ### Lemma A. 제 2종 전파의 성질
 > $\forall i, j \in HonestNodes, \forall k \in All Nodes, \forall r \in Request : T2Broadcast_k(r) \land Observed_i(r) \Rightarrow Observed_j(r) $
