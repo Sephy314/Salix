@@ -1,40 +1,30 @@
-# Salix: Leaderless BFT Consensus with Majority Quorums and Constant Rounds
+# Salix, BFT Leaderless Majority Quorum Constant Round Consensus
 
 ## What is Salix?
+A protocol that enables reaching consensus within a constant number of rounds using only a majority quorum in BFT consensus.
 
-Salix is a consensus protocol designed to achieve consensus within a constant number of rounds in Byzantine Fault-Tolerant (BFT) systems using quorums of only half the nodes.
-
-Its key characteristics include:
-
-- **Leaderless consensus:** Unlike conventional view-change-based approaches, Salix adopts a leaderless architecture to address the centralised write-distribution bottleneck associated with a leader.
-- **Reduced quorum requirements:** By employing digital signatures, Salix allows consensus to be reached with \(f+1\) signatures, rather than the conventional \(2f+1\) threshold.
-- **No fallback protocol:** Similar existing approaches often rely on Dolev–Strong-based fallback mechanisms, which introduce high communication complexity. Salix does not require such a fallback and maintains a constant number of rounds even in the worst case, making it comparatively lightweight.
+Its key features include: a leaderless consensus architecture designed to solve the centralized write-distribution bottleneck of traditional View-Change mechanisms; the use of digital signatures to reach consensus with a condition of more than $f+1$ honest nodes, which is below the oral-message lower bound of $2f+1$; and a design that always operates in a constant number of rounds without a fallback, making it relatively lightweight in the worst case compared to similar existing studies that rely on Dolev-Strong-based fallbacks with high communication complexity.
 
 ## Assumptions
-
-- A synchronous network model is assumed. Consensus completion is not guaranteed before the Global Stabilisation Time (GST).
-- The system assumes \(n > 2f+1\), where the quorum size is \(f+1\).
-- Clients may also be Byzantine.
-- Byzantine behaviours include crashes, collusion, silence, equivocation, malicious requests, and replay attacks.
-- Digital signatures are used, with mutually verifiable public keys and an unforgeability assumption.
-- Client request arrival order is not guaranteed.
-- Fail-recovery is not guaranteed by the protocol, although it can be added at the implementation level.
-- Hash conflicts are assumed not to occur.
+- A synchronous network model is assumed. Consensus completion cannot be guaranteed before GST.
+- $n > 2f + 1$ is assumed. The Quorum size is $f + 1$.
+- Clients can also be Byzantine.
+- Byzantine behaviors include crash, collusion, silence, equivocation, forged requests, and replay attacks.
+- Public keys are mutually verifiable, and unforgeable digital signatures are used.
+- The arrival order of client requests is not guaranteed.
+- Fail recovery is not guaranteed, though it can be added at the implementation layer.
+- Hash collisions are assumed not to occur.
 - The log is assumed to be insertable rather than strictly append-only.
 
 ## Guaranteed Properties
-
 Salix guarantees the following properties:
-
-1. **Agreement:** All honest nodes eventually observe an honest proposal and apply it to their respective state machines.
-2. **Liveness:** Byzantine behaviour does not prevent consensus from progressing, and consensus terminates within a finite amount of time.
-3. **Validity:** Byzantine nodes cannot commit invalid values.
+1. **Agreement:** All honest nodes observe an honest proposal and eventually apply it to their own State Machine.
+2. **Liveness:** Even under Byzantine influence, consensus is unaffected and terminates within a finite amount of time.
+3. **Validity:** Byzantine actors cannot cause an invalid value to be committed.
 
 ## Data Structure Definitions
-
-The following data structures are required for consensus.
-
-```text
+The following defines the data structures required for consensus.
+```
 ProposeId: H(clientSignature, clientRequest, requestId)
 
 ClientRequest {
@@ -48,7 +38,7 @@ ClientRequest {
 Request {
     ClientRequest
 
-    Sequence
+    Sequence 
     ProposerSignature
 }
 
@@ -60,341 +50,176 @@ CommitCert {
     }, ...]
 }
 ```
+Note: This is pseudo-code provided for illustrative purposes only.
 
-Note that this is pseudocode provided solely to illustrate the data structures.
-
-## Propagation Mechanisms
-
-Salix employs two communication mechanisms.
+## Broadcast Mechanisms
+Salix uses two communication methods.
 
 ### Type 1 Broadcast
-
-```text
+```
 on Type1Broadcast(data)
     for i in all nodes
         i.send(data)
 ```
-
-This mechanism broadcasts data to all nodes. If the round-trip communication time is \(t\), the response is received within \(t\).
-
-More precisely, a node sends the data to every other node, excluding itself. When an honest node performs a Type 1 broadcast, all nodes become aware of the broadcast.
+This is a method of sending to all nodes. If the round-trip communication time is $t$, it takes time $t$ to receive a response.
+It is a broadcast method in which a single node propagates data to all other nodes except itself. When an honest node performs a Type 1 Broadcast, all nodes become aware of the existence of this broadcast.
 
 ### Type 2 Broadcast
-
-```text
+```
 on Type2Broadcast(data)
     if broadcasted(data)
         return
+    
     Type1Broadcast(data)
 
 on sent(data)
     Type2Broadcast(data)
 ```
-
-This mechanism allows all nodes to propagate data to every other node. Each node that receives the data performs a Type 1 broadcast if it has not already broadcast the same data.
-
-As long as at least one honest node exists, the Type 1 broadcast ensures that all nodes receive the data. If the round-trip communication time is \(t\), the entire propagation process takes at most \(2t\).
+This is a broadcast method in which all nodes propagate data to all other nodes. Upon receiving a broadcast, every node performs a Type 1 Broadcast if it has not already broadcast the data. As long as there is at least one honest node, all nodes will hear this broadcast via Type 1 Broadcast. If the round-trip communication time is $t$, this takes a total time of $2t$.
 
 ## Consensus Specification
 
 ### Fetch
+> `Fetch() -> (latestCC)`
 
-> Fetch() -> (latestCC)
-
-Fetch is a preliminary step used to synchronise Sequence values before consensus or read operations.
-
-Before GST, Sequence values may temporarily diverge, as described in the subsequent protocol specification. Fetch is intended to mitigate this divergence.
-
-When Fetch is invoked, each node returns its latest Commit Certificate (CC). This allows the requester to determine values such as `nextSequence`.
-
-Fetch uses Type 1 broadcast and is not considered the beginning of a consensus instance.
+This is a stage for synchronizing the Sequence before consensus or a Read operation. Before GST, the Sequence may diverge for a certain period of time due to the mechanisms described below. This stage is intended to mitigate that divergence. When Fetch is invoked, every node returns its most recent CC. Through this, `nextSequence` and similar information can be determined. It uses Type 1 Broadcast and is not considered the start of consensus.
 
 ### Propose
+> `Propose(request) -> ()`
 
-> Propose(request) -> ()
-
-Propose marks the beginning of a consensus instance.
-
-The client selects an arbitrary node as the Proposer and supplies the request data, excluding the fields that the Proposer must add.
-
-The Proposer verifies the validity of the request, inserts a Sequence value, constructs a Request based on the client request, and performs a Type 1 broadcast to all nodes.
+Propose is the starting point of consensus. A client selects an arbitrary node as the Proposer and provides the data excluding the fields to be wrapped by the Proposer. After verifying the validity of the data, the Proposer inserts the Sequence, constructs a `Request` based on the `ClientRequest`, and performs a Type 1 Broadcast to all nodes.
 
 ### Prepare
+> `Prepare(request) -> (request)`
 
-> Prepare(request) -> (request)
-
-If the Proposer is Byzantine, honest nodes may not all receive the original Propose message.
-
-This phase is intended to handle Byzantine equivocation and silence, which could otherwise prevent honest nodes from becoming aware of the proposal.
-
-A node that receives a Propose message executes Prepare and performs a Type 2 broadcast to all nodes.
-
-According to the definition of Type 2 broadcast, a request that has already been propagated is not broadcast again.
+If the Proposer is Byzantine, not all honest nodes may hear the Propose message. This stage guards against a Byzantine node performing equivocation or remaining silent. A node that receives a Propose executes Prepare and performs a Type 2 Broadcast to all nodes. By the definition of Type 2 Broadcast, a request that has already been broadcast is not broadcast again.
 
 ### Vote
+> `Vote(request, signature) -> (request, signature)`
 
-> Vote(request, signature) -> (request, signature)
-
-This phase is responsible for forming the signature collection.
-
-During this phase, each node validates the request. Validation checks include whether the Sequence matches its local state machine, whether the ProposeId is valid, and whether the same request has already been received.
-
-If the request passes validation, the node generates its signature to contribute to the signature collection.
-
-A total of \(f+1\) node signatures is required.
-
-Two Commit Certificates (CCs) are considered identical if their Requests are identical, regardless of which nodes contributed their signatures.
+This stage is for forming a signature set. Here, the node performs validation on the request. This validation checks whether the Sequence matches its own State Machine (SM), whether the `ProposeId` is valid, whether the same request has already been received, etc. If valid, the node creates its own signature to contribute to the signature set. The signature set requires signatures from $f+1$ nodes, and matching CCs are treated as the same CC as long as the `Request` matches, regardless of which specific nodes contributed the signatures.
 
 ### Commit
+> `Commit(request, commitCert) -> (request, commitCert)`
 
-> Commit(request, commitCert) -> (request, commitCert)
-
-This phase ensures state convergence among honest nodes, even when Byzantine nodes selectively distribute signatures that contribute to their own Commit Certificates.
-
-In this phase, \(f+1\) honest signatures obtained during the Vote phase are combined with the corresponding Request to form a CC.
-
-The resulting CC is then propagated using Type 2 broadcast.
-
-A CC corresponding to a particular Request is broadcast only once.
-
-In other words, as described above, CCs are considered identical whenever their Requests match, regardless of whether their signature collections are identical. Even if different nodes contributed the signatures, a CC containing only honest signatures is shared only once.
-
-Once a node obtains a valid CC containing honest signatures, it records the certificate, applies the corresponding request to its state machine, and increments its Sequence by one.
-
-Upon receiving this CC, an honest node notifies the client and terminates the consensus instance.
+This stage ensures state consistency among honest nodes even if a Byzantine node selectively sends signatures that contribute to a CC. In this stage, a node combines $f+1$ valid signatures acquired in the Vote stage with the `Request` to form a CC, and then propagates this CC via Type 2 Broadcast. A CC corresponding to a given `Request` is sent only once. That is, as stated earlier, even if the constituent signatures differ, CCs with the same `Request` are considered identical; as long as all contributing signatures are valid, a CC with valid signatures is shared only once. Upon securing a valid CC in this stage, every node records it, applies it to its SM, and increments its Sequence by one. Honest nodes that receive this report the result to the Client and terminate consensus.
 
 ### Phase Transition
-
-Phase transitions are performed locally.
-
-A node advances to the next phase when it receives \(f+1\) responses supporting the same result.
-
-Requests concerning previous phases remain unchanged, and the node returns the value it previously responded with.
-
-For requests concerning future phases beyond the node's current phase, it returns a `retry` response.
-
-This response does not constitute a vote or any other form of support. An honest node receiving such a response handles the retry according to its implementation policy.
+This is executed locally: upon receiving $f+1$ responses supporting the same value, a node transitions to the next phase. For requests corresponding to a previous phase, the node's response does not change and it resends the value it previously responded with. For requests corresponding to a future phase relative to the node's current phase, the node returns a `retry` response. This does not constitute any claim/vote, and an honest node receiving this response handles retransmission according to the implementation's policy.
 
 ### Sequence Rules
+Sequences are primarily compared by numerical order; however, multiple consensus instances may correspond to the same Sequence in this protocol, which is intentional. According to the protocol assumptions, consensus does not always reflect the order of client requests—specifically, this applies only to requests submitted concurrently before a consensus instance completes. Nevertheless, since consensus must guarantee Agreement, ordering is determined by hashing `ProposeId` and comparing the hash values. A Proposal's Sequence may be lower than the current Sequence. In this case, based on the node's Sequence prior to the start of consensus, if the request's Sequence falls within the current Sequence $\pm 1$ according to the lemma below, it is treated as valid. By the lemma below, an honest proposal's Sequence cannot exceed the current Sequence (beyond this bound). When incrementing the Sequence, if two or more consensus instances share the same Sequence, the Sequence is incremented only once.
 
-Sequence values are generally compared numerically. However, the protocol permits multiple consensus instances to belong to the same Sequence, and this is intentional.
-
-Under the protocol's assumptions, consensus does not necessarily preserve the arrival order of client requests. More specifically, this applies to requests submitted concurrently before an ongoing consensus instance has completed.
-
-Nevertheless, since consensus must guarantee Agreement, the order is determined by comparing the hashes of ProposeIds.
-
-A proposal's Sequence may be lower than the current local Sequence. In such cases, the node considers the proposal valid if its Sequence falls within the range of the current Sequence \(\pm 1\), according to the lemma presented below, using the Sequence observed before the corresponding consensus instance began.
-
-According to the subsequent lemma, the Sequence of an honest proposal cannot be greater than the current Sequence by more than one.
-
-When multiple consensus instances belong to the same Sequence, the Sequence is incremented only once.
-
-### Validity Verification
-
-When a node receives a proposal, it performs validity verification.
-
-This includes checking the ProposeId hash, the current phase, the signature, and any other explicitly specified conditions.
-
-Validation is a no-op action in the sense that honest nodes produce the same result when given identical inputs and state.
-
-Hash collisions and identifier collisions are assumed not to occur.
+### Validation
+When a node receives a Proposal, it performs Validation on it. Validation includes verifying the `ProposeId` hash, verifying the Phase, verifying signatures, and executing any additionally specified checks. Because Validation is a no-op action, all honest nodes always obtain the same result. Hash collisions and ID collisions are assumed not to occur.
 
 ### ProposeId and RequestId
-
-A single ProposeId corresponds to exactly one Request.
-
-According to the definition of ProposeId above, it is computed by hashing the client signature, client request, and RequestId. This value is verified during validity checking.
-
-RequestId exists to allow the same logical request to be submitted more than once when required by the implementation.
-
-Repeated submissions of the same request with different RequestIds, as well as exceptional cases such as DDoS attacks, are not considered Byzantine actions within the consensus protocol itself. Mitigating such cases requires rate limiting at the implementation level.
+One `ProposeId` corresponds to only one `Request`. According to the earlier definition of `ProposeId`, it is the hash of the Request, SignatureId, and RequestId, so its correctness is verified during Validation. `RequestId` is a mechanism to allow cases where the same request must be issued twice at the implementation level. Exceptions such as repeatedly sending the same request while changing only the `RequestId`, or DDoS attacks, are not considered Byzantine actions within the consensus protocol; countermeasures against them are left to rate-limiting at the implementation layer.
 
 ## Demonstration
 
 ### Assumptions
+This section specifies the assumptions required to prove the Liveness and Safety of the protocol, along with the properties to be guaranteed. This protocol guarantees Liveness and Safety, whose mathematical properties are as follows:
 
-This section specifies the assumptions and guarantees required to prove the Liveness and Safety properties of the protocol.
-
-Salix guarantees Liveness and Safety under the following mathematical assumptions.
-
-| Category | Assumption |
+| | |
 |---|---|
 | Network | Synchronous |
-| Cryptography | Digital signatures |
-| Nodes | \(2f+2\) (minimum configuration) |
-| Quorum | \(f+1\) |
-| Byzantine Node Actions | Collusion, equivocation, silence, crash |
-| Byzantine Client Actions | Collusion, replay, malformed requests |
+| Cryptography | Digital Signature |
+| Nodes | $2f+2$ (minimal) |
+| Quorum | $f+1$ |
+| Byzantine Node Actions | Collusion, Equivocation, Silent, Crash |
+| Byzantine Client Actions | Collusion, Replay, Malformed Request |
 
-**Liveness**
+- **Liveness**
+  $$
+  \forall i \in H, \forall r \in R_{valid} : Propose(r) \Rightarrow \Diamond Decided_i(r)
+  $$
 
-\[
-\forall i \in H, \forall r \in R_{valid} :
-Propose(r) \Rightarrow \Diamond Decided_i(r)
-\]
-
-**Safety**
-
-\[
-\forall i,j \in H, \forall r \in R_{valid} :
-Decision_i(r) = Decision_j(r)
-\]
+- **Safety**
+  $$
+  \forall i, j \in H, \forall r \in R_{valid} : Decision_i(r) = Decision_j(r)
+  $$
 
 ### Lemma A. Property of Type 2 Broadcast
+> $\forall i, j \in HonestNodes, \forall k \in AllNodes, \forall r \in Request : T2Broadcast_k(r) \land Observed_i(r) \Rightarrow Observed_j(r)$
 
-\[
-\forall i,j \in HonestNodes,\ \forall k \in AllNodes,\ \forall r \in Request :
-T2Broadcast_k(r) \land Observed_i(r)
-\Rightarrow Observed_j(r)
-\]
+If any node $k$ performs a Type 2 Broadcast and at least one honest node observes it, then all honest nodes can observe that value.
 
-If any node \(k\) performs a Type 2 broadcast and at least one honest node observes the broadcast, then all nodes can observe the corresponding value.
+**Proof:**  
+When an honest node verifies a value received via Type 2 Broadcast, by the protocol rules it performs a Type 1 Broadcast. By the definition of Type 1 Broadcast, the value is propagated to and becomes observable by all nodes. $\blacksquare$
 
-**Proof:**
+Through this, in the Prepare stage, if any node sends Prepare to at least one honest node, all honest nodes become aware of the request's existence; and in the Commit stage, if at least one honest node discovers the CC, all nodes will learn of this CC.
 
-When an honest node receives a value propagated through Type 2 broadcast, it performs a Type 1 broadcast according to the protocol rules.
+### Lemma B. Proof of the $n > 2f + 1$ Lower Bound Under Current Protocol Rules
+> $|N| > |Q| + |F|$
 
-By the definition of Type 1 broadcast, the value is propagated to and can be observed by every node. \(\blacksquare\)
+The total number of nodes must always be strictly greater than the sum of the quorum size and the number of faulty nodes.
 
-Consequently, during Prepare, if a request has been propagated to at least one honest node, all honest nodes can become aware of its existence.
+**Proof:**  
+According to Lemma A, if any node propagates a value to at least one honest node via Type 2 Broadcast, it becomes observable by all nodes. Furthermore, to accept a value, a node requires supporting votes from at least $q = f + 1$ nodes excluding itself. If a Byzantine node forwards a request to only a single honest node, by the protocol rules, other honest nodes require assertions from at least $f + 1$ honest nodes (excluding themselves) to accept it. In addition, the number of nodes must be a natural number, and by the protocol rules, only one vote per node is recognized. Assuming the worst case in which Byzantine nodes make assertions opposing the honest nodes—that is, hindering honest nodes as much as possible—we have:
 
-Similarly, during Commit, if at least one honest node discovers a CC, all nodes can become aware of that CC.
+$$
+q \leq n - f - 1 \\
+q + f + 1 \leq n \\
+\therefore n > q + f \iff n > 2f + 1 \quad (\because n, q, f \in \mathbb{N})
+$$
 
-### Lemma B. Proof of the Lower Bound \(n > 2f+1\) Under the Current Protocol Rules
+Thus, the bound holds. Within the protocol, the Quorum is meaningfully used in Phase Transition, Prepare, Vote, Commit, and the CC Threshold count. The first four can be proven using the inequality above, and the last case holds since $q > f$ is always satisfied. $\blacksquare$
 
-\[
-|N| > |Q| + |F|
-\]
+Additionally, due to the property of Type 2 Broadcast, this protocol does not need to consider conventional quorum intersection.
 
-The total number of nodes must always exceed the sum of the quorum size and the maximum number of faulty nodes.
+### Lemma C. Upper Bound on Time to Sequence Convergence
+> $\forall i, j \in H, \exists \tau \in [0, t + e] : Seq_i(\tau) = Seq_j(\tau)$
 
-**Proof:**
+All honest nodes converge to the same Sequence within the sum of the synchrony bound $t$ and the hardware error $e$.
 
-According to Lemma A, if a value is propagated through Type 2 broadcast and reaches at least one honest node, all nodes can observe it.
+**Proof:**  
+Let time $0$ be the moment the first honest node discovers and applies a Commit. According to the protocol rules, immediately after verifying and applying the value, this node transmits it to all other nodes, propagating it across the network. Under the synchrony assumption, delivery takes at most $t$. Given an error margin $e$ accounting for SM application, the elapsed time from when the earliest honest node applies the commit to its SM until the latest honest node applies it to its SM is at most $t + e$. $\blacksquare$
 
-Furthermore, to accept a value, a node requires support from at least \(q=f+1\) nodes, excluding itself.
+### Lemma D. Stability Proof for the Optimistic Sequence Range
+> $\forall i, j \in H, \forall r \in R_{valid} : ValidSeq_i(r) = ValidSeq_j(r)$
 
-Suppose a Byzantine node forwards a request to only one honest node. According to the protocol rules, the other honest nodes must obtain support from at least \(f+1\) honest nodes, excluding themselves, before accepting the value.
+All honest nodes make the same determination regarding the sequence validity of any honest request.
 
-Additionally, the number of nodes must be a natural number. According to the protocol rules, only one vote per node is counted.
+**Proof:**  
+According to the protocol, the sequence component of the `Valid` function and its evaluation can be defined as follows, where $r$ denotes the request's Sequence and $l$ denotes the local node's current Sequence:
 
-Considering the worst-case scenario in which Byzantine nodes make claims that oppose the honest nodes, thereby maximally obstructing them, we obtain:
-
-\[
-q \leq n-f-1
-\]
-
-\[
-q+f+1 \leq n
-\]
-
-\[
-\therefore n > q+f
-\iff n > 2f+1
-\quad (\because n,q,f \in \mathbb{N})
-\]
-
-Therefore, the inequality holds.
-
-Within the protocol, quorum size is used in Phase Transition, Prepare, Vote, Commit, and the CC threshold.
-
-The first four cases can be justified using this inequality, while the final case follows from the fact that \(q>f\) always holds. \(\blacksquare\)
-
-Furthermore, due to the properties of Type 2 broadcast, conventional quorum intersection does not need to be considered in this protocol.
-
-### Lemma C. Upper Bound on the Time Required for Sequence Convergence
-
-\[
-\forall i,j \in H,\ \exists \tau \in [0,t+e] :
-Seq_i(\tau)=Seq_j(\tau)
-\]
-
-All honest nodes converge to the same Sequence within the sum of the synchronous network bound \(t\) and the hardware execution error \(e\).
-
-**Proof:**
-
-Let the time at which the first honest node discovers and applies a Commit Certificate be defined as time \(0\).
-
-According to the protocol rules, immediately after verifying and applying the value, this node broadcasts it to all other nodes.
-
-Under the synchronous network assumption, delivery takes at most \(t\).
-
-Considering the execution error \(e\) associated with applying the value to the state machine, the maximum time between the first honest node applying the value and the last honest node applying it is \(t+e\). \(\blacksquare\)
-
-### Lemma D. Stability of the Optimistic Sequence Validation Range
-
-\[
-\forall i,j \in H,\ \forall r \in R_{valid} :
-ValidSeq_i(r)=ValidSeq_j(r)
-\]
-
-All honest nodes determine the validity of a given honest request's Sequence consistently.
-
-**Proof:**
-
-According to the protocol, the Sequence-related component of the Valid function can be defined as follows.
-
-Let \(r\) denote the request's Sequence and \(l\) denote the current local Sequence.
-
-\[
-ValidSeq(r,l)=
+$$
+ValidSeq(r, l) =
 \begin{cases}
-true & l-1 \leq r \leq l+1 \\
-false & otherwise
+\text{true} & l - 1 \leq r \leq l + 1 \\
+\text{false} & \text{otherwise}
 \end{cases}
-\]
+$$
 
-This function determines whether a request is valid based on the Sequence at the time its proposal was initially submitted and the Sequence observed after the latest CC has been obtained.
+This function determines a request $r$ to be valid if its Sequence lies between the Sequence at the time the Proposal was initially proposed and the Sequence observed after $t + e$ from the current time (the time by which the latest CC is received per Lemma C). To verify the Agreement property of this check, we summarize the basic properties and divide the analysis into cases.
 
-According to Lemma C, the latter observation occurs within \(t+e\) of the relevant point in time.
+- **Basic Properties**
+  1. By Lemma C, a CC is always delivered within the synchrony bound $t$ plus error $e$, causing Sequences to converge.
+  2. Due to the Fetch stage, the past-bound error of a Request's Sequence is at most $t$.
+  3. The observation time difference between the first node to receive request $r$ and the last node to receive it is at most $3t$ ($Propose + Prepare$).
+  4. Because a Sequence can only increment again after a newly created request following the previous increment reaches consensus, Sequence-incrementing consensus instances cannot be processed in parallel. Consequently, a Sequence can increment only after at least one full consensus duration of $t + 2t + 2t + 2t = 7t$.
 
-To verify the Agreement property of this function, we first establish the following basic properties and then consider the possible cases.
+1. **Case I: $R_{Seq} < local$**
 
-**Basic Properties**
+   When the local Sequence is greater than the request's Sequence, the node is already aware of the Sequence increment at the current point in time. In the worst case for its reception time, the node may lag behind the first discovering node by at most $3t$ according to Property 3. To account for this, the local state up to $3t$ prior to initial discovery must be considered; however, by Property 4, Sequence-incrementing consensus instances cannot proceed in parallel. Therefore, in this case, the Sequence can differ by at most $-1$.
 
-1. According to Lemma C, CC propagation and Sequence synchronisation complete within the synchronous network bound \(t\) plus the execution error \(e\).
-2. Due to Fetch, the maximum discrepancy in observing the request's preceding Sequence is \(t\).
-3. The maximum difference in observation time between the node that first receives request \(r\) and the node that receives it last is \(3t\), corresponding to Propose + Prepare.
-4. Since a new consensus instance must be completed after the Sequence has increased before the Sequence can increase again, consensus instances responsible for Sequence increments cannot proceed in parallel. Consequently, at least \(t+2t+2t+2t=7t\) must elapse before the next Sequence increment can occur.
+2. **Case II: $R_{Seq} = local$**
 
-**Case I: \(R_{Seq} < local\)**
+   This is the ideal case, and the request is accepted.
 
-When the local Sequence is greater than the request's Sequence, this indicates that a Sequence increment has occurred.
+3. **Case III: $R_{Seq} > local$**
 
-In the worst case, the node receives the request at the latest possible time, which may differ by up to \(3t\) from the time at which the request was first discovered, according to Property 3.
+   When the request's Sequence is greater than the local Sequence, by Property 4, Sequence-incrementing consensus instances cannot proceed in parallel. By Lemma C, CC propagation and Sequence synchronization take at most $t + e$. Since incrementing the Sequence takes at least $7t$ by Property 4, and generally $e < 6t$, the Sequence can differ by at most $+1$.
 
-To account for this discrepancy, the local state up to \(3t\) before the first discovery must be considered.
-
-However, according to Property 4, consensus instances that increment the Sequence cannot proceed in parallel.
-
-Therefore, in this case, the Sequence can differ by at most \(-1\).
-
-**Case II: \(R_{Seq}=local\)**
-
-This is the ideal case. The request is accepted.
-
-**Case III: \(R_{Seq} > local\)**
-
-When the request's Sequence is greater than the current local Sequence, Property 4 ensures that consensus instances responsible for Sequence increments cannot proceed in parallel.
-
-According to Lemma C, CC propagation and Sequence synchronisation take at most \(t+e\).
-
-Since at least \(7t\) must elapse before the next Sequence increment, according to Property 4, and generally \(e<6t\), the Sequence can differ by at most \(+1\).
-
-Therefore, based on the cases above, the Sequence of an honest request can differ from the current local Sequence by at most \(\pm 1\).
-
-Consequently, the function \(ValidSeq(r,l)\) produces the same result for every honest node when evaluating an honest request. \(\blacksquare\)
+Therefore, by the cases above, the Sequence of any honest request lies within the current Sequence $\pm 1$. Accordingly, $ValidSeq(r, l)$ yields the same conclusion across all honest nodes for all honest requests. $\blacksquare$
 
 ## References
-
-- **Dolev–Strong:** Addresses the problem that the observed complexity of the conventional Dolev–Strong Protocol, frequently used as a fallback mechanism, increases approximately in the order of \(O(n^3)\).
-  - DOI: [10.1137/0212045](https://doi.org/10.1137/0212045)
-
-- **DLS Impossibility Theorem:** Addresses the impossibility of consensus under partial synchrony assumptions.
-  - DOI: [10.1145/42282.42283](https://doi.org/10.1145/42282.42283)
-
-- **EPaxos:** Provides inspiration for leaderless consensus and discusses the bottleneck introduced by centralised leaders.
-  - DOI: [10.1145/2517349.2517350](https://doi.org/10.1145/2517349.2517350)
-
-- **Leader Consensus Comparison:** Provides supporting evidence concerning leader availability bottlenecks.
-  - DOI: [10.5281/zenodo.24422667](https://doi.org/10.5281/zenodo.24422667)
+- **Dolev-Strong:** Highlights the issue that the Dolev-Strong protocol, frequently used as a fallback, scales to nearly $O(n^3)$ in communication complexity.
+  - DOI: `10.1137/0212045`
+- **DLS Impossibility Theorem:** Establishes the impossibility results under the partial synchrony model.
+  - DOI: `10.1145/42282.42283`
+- **EPaxos:** Introduces the concept of leaderless consensus and critiques the bottleneck of centralized leaders.
+  - DOI: `10.1145/2517349.2517350`
+- **Leader Consensus Comparison:** Provides supporting evidence regarding leader availability bottlenecks.
+  - DOI: `10.5281/zenodo.24422667`

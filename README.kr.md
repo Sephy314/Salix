@@ -81,18 +81,22 @@ on sent(data)
 ## 합의 명세
 ### Fetch
 > Fetch() -> (latestCC)
+
 합의나 Read전에 Sequence 일치를 위한 단이다. GST 이전에는, 뒤에 나오는것에 따라 Sequence가 일정 시간동안 갈라 질 수 있다. 이 단은 이를 완화하기 위한 단이다. Fetch를 하면, 모든 노드는 가장 최근의 CC를 반환한다. 이를 통해 nextSequence등을 알 수 있다. 제 1종 전파를 사용하며 이는 합의의 시작으로 보지 않는다.
 
 ### Propose
 > Propose(request) -> ()
+
 Propose는 합의의 시작점이다. 클라이언트는 임의의 노드를 Proposer로 선정후, Proposer가 추가로 감쌀 부분외 데이터를 채워서 제공을 한다. Proposer은 이의 정당성을 검증후 Sequence 삽입후 client request기반으로 request 생성 후, 모든 노드들에게 제 1종 전파를 수행한다.
 
 ### Prepare
 > Prepare(request) -> (request)
+
 Proposer가 비잔틴이면, 모든 정직 노드가 Propose를 듣지 못 할 수도 있다. 비잔틴 노드가 Equivocation을 행하거나 Silent를 대비하기 위한 단이다. Propose를 받은 노드는 Prepare을 수행하며 제 2종 전파를 모든 노드들에게 수행한다. 제 2종 전파의 정의에 의해, 한번 전파한 요청은 다시 전파하지 않는다.
 
 ### Vote
 > Vote(requet, signature) -> (request, signature)
+
 이 값은 서명 집합을 형성하기 위한 단계이다. 이때, 노드는 요청에 대한 Validate 요청을 수행한다. 이 Validate 검증은, Seq가 자신의 SM과 일치 하는지, ProposeId가 올바른지, 이미 왔던 동일한 요청인지등을 검증한 후, 옳을 시 서명 집합에 기여할 자신의 서명을 만든다. 서명 집합에는 f+1개의 노드의 서명이 필요하며, 일치하는 CC란, 서명에 기여한 노드에는 상관 없이 request가 일치하면 같은 CC로 치부한다.
 
 ### Commit
@@ -162,12 +166,13 @@ q + f + 1 \leq n \\
 \iff n > 2f + 1 
 (\because n, q, f \in \N)
 $$
+
 다음이 성립한다. 프로토콜 내에서, Quorum이 유의미하게 쓰이는 부분은, Phase 전환, Prepare, Vote, Commit, CC Threshold 갯수 부분이다. 앞 4개는 이를 이용해 증명 가능하고, 마지막 경우는 $q > f$ 가 항상 성립하므로 된다. $\blacksquare$
 
 추가로, 이 프로토콜은 제 2 전파의 특성 때문에, 일반적으로 고려되는 쿼럼 교집합을 생각하지 않아도 된다.
 
 ### Lemma C. Seqence의 일치까지의 시간 상한
-> $\forall i, j \in H, \exist \tau \in [0, t + e] : Seq_i(\tau) = Seq_j(\tau)$
+> $\forall i, j \in H, \exists \tau \in [0, t + e] : Seq_i(\tau) = Seq_j(\tau)$
 
 모든 정직 노드는 동기 가정 t와 하드웨어 오차 e의 합 안에 시퀀스가 일치된다. 
 
