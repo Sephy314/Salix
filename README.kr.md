@@ -162,7 +162,7 @@ q \leq n - f - 1 \\
 q + f + 1 \leq n \\
 \therefore n > q + f 
 \iff n > 2f + 1 
-(\because n, q, f \in \N)
+(\because n, q, f \in \mathbb{N})
 $$
 
 다음이 성립한다. 프로토콜 내에서, Quorum이 유의미하게 쓰이는 부분은, Phase 전환, Prepare, Vote, Commit, CC Threshold 갯수 부분이다. 앞 4개는 이를 이용해 증명 가능하고, 마지막 경우는 $q > f$ 가 항상 성립하므로 된다. $\blacksquare$
