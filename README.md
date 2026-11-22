@@ -157,9 +157,12 @@ The total number of nodes must always be strictly greater than the sum of the qu
 According to Lemma A, if any node propagates a value to at least one honest node via Type 2 Broadcast, it becomes observable by all nodes. Furthermore, to accept a value, a node requires supporting votes from at least $q = f + 1$ nodes excluding itself. If a Byzantine node forwards a request to only a single honest node, by the protocol rules, other honest nodes require assertions from at least $f + 1$ honest nodes (excluding themselves) to accept it. In addition, the number of nodes must be a natural number, and by the protocol rules, only one vote per node is recognized. Assuming the worst case in which Byzantine nodes make assertions opposing the honest nodes—that is, hindering honest nodes as much as possible—we have:
 
 $$
-q \leq n - f - 1 \\
-q + f + 1 \leq n \\
-\therefore n > q + f \iff n > 2f + 1 \quad (\because n, q, f \in \mathbb{N})
+\begin{aligned}
+q &\leq n - f - 1 \\
+q + f + 1 &\leq n \\
+\therefore n &> q + f \\
+\iff n &> 2f + 1 \quad (\because n, q, f \in \mathbb{N})
+\end{aligned}
 $$
 
 Thus, the bound holds. Within the protocol, the Quorum is meaningfully used in Phase Transition, Prepare, Vote, Commit, and the CC Threshold count. The first four can be proven using the inequality above, and the last case holds since $q > f$ is always satisfied. $\blacksquare$
