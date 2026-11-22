@@ -131,11 +131,13 @@ This section specifies the assumptions required to prove the Liveness and Safety
 | Byzantine Client Actions | Collusion, Replay, Malformed Request |
 
 - **Liveness**
+
   $$
   \forall i \in H, \forall r \in R_{valid} : Propose(r) \Rightarrow \Diamond Decided_i(r)
   $$
 
 - **Safety**
+
   $$
   \forall i, j \in H, \forall r \in R_{valid} : Decision_i(r) = Decision_j(r)
   $$

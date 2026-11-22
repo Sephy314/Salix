@@ -132,11 +132,13 @@ Sequence는 기본적으로, 대소 비교를 하나, 프로토콜 상에서는 
 | Byzantine Client Actions | Collusion, Replay, Malformed Request |
 
 - Liveness
+
     $$
     \forall i \in H, \forall r \in R_{valid} : Propose(r) \Rightarrow \Diamond Decided_i(r)
     $$
 
 - Safety
+
     $$
     \forall i. j \in H, \forall r \in R_{valid} : Decision_i(r) = Decision_j(r)
     $$
